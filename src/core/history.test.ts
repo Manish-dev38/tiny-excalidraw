@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { createHistory, pushHistory, redo, undo } from './history'
-import { addElement, createScene } from './scene'
+import {
+  applyOp,
+  createHistory,
+  invertOp,
+  redo,
+  record,
+  undo,
+  type Op,
+} from './history'
+import { addElement, createScene, getElement } from './scene'
 import type { ExcalidrawElement } from './types'
 
 const rect = (id: string): ExcalidrawElement => ({
@@ -15,90 +23,89 @@ const rect = (id: string): ExcalidrawElement => ({
   strokeWidth: 1,
 })
 
-const s0 = createScene()
-const s1 = addElement(s0, rect('a'))
-const s2 = addElement(s1, rect('b'))
-
 describe('createHistory', () => {
-  it('starts with the given scene and empty stacks', () => {
-    const h = createHistory(s0)
-    expect(h.present).toBe(s0)
-    expect(h.past).toEqual([])
-    expect(h.future).toEqual([])
+  it('starts empty', () => {
+    expect(createHistory()).toEqual({ past: [], future: [], limit: 100 })
   })
 })
 
-describe('pushHistory', () => {
-  it('records the previous present into past and advances present', () => {
-    let h = createHistory(s0)
-    h = pushHistory(h, s1)
-    expect(h.present).toBe(s1)
-    expect(h.past).toEqual([s0])
-    expect(h.future).toEqual([])
-  })
-  it('does not record when the new scene is identical to present', () => {
-    let h = createHistory(s0)
-    h = pushHistory(h, s0)
-    expect(h.past).toEqual([])
-    expect(h.present).toBe(s0)
-  })
-  it('caps the past stack at the limit, dropping oldest', () => {
-    let h = createHistory(s0, 2)
-    h = pushHistory(h, s1)
-    h = pushHistory(h, s2)
-    h = pushHistory(h, addElement(s2, rect('c')))
-    expect(h.past).toHaveLength(2)
-    expect(h.past[0]).toBe(s1)
-    expect(h.past[1]).toBe(s2)
+describe('applyOp', () => {
+  it('applies add, update, and remove ops', () => {
+    let scene = createScene()
+    scene = applyOp(scene, { type: 'add', element: rect('a') })
+    expect(getElement(scene, 'a')).toBeDefined()
+    scene = applyOp(scene, { type: 'update', id: 'a', prev: { x: 0 }, next: { x: 5 } })
+    expect(getElement(scene, 'a')).toMatchObject({ x: 5 })
+    scene = applyOp(scene, { type: 'remove', element: rect('a') })
+    expect(getElement(scene, 'a')).toBeUndefined()
   })
 })
 
-describe('undo', () => {
-  it('steps back through recorded states', () => {
-    let h = createHistory(s0)
-    h = pushHistory(h, s1)
-    h = pushHistory(h, s2)
-    const r1 = undo(h)
-    expect(r1).not.toBeNull()
-    expect(r1!.scene).toBe(s1)
-    expect(r1!.history.future).toEqual([s2])
-    const r2 = undo(r1!.history)
-    expect(r2!.scene).toBe(s0)
-    expect(r2!.history.future).toEqual([s1, s2])
+describe('invertOp', () => {
+  it('inverts an add into a remove', () => {
+    const op: Op = { type: 'add', element: rect('a') }
+    expect(invertOp(op)).toEqual({ type: 'remove', element: rect('a') })
   })
-  it('returns null when there is nothing to undo', () => {
-    const h = createHistory(s0)
-    expect(undo(h)).toBeNull()
+  it('inverts a remove into an add', () => {
+    const op: Op = { type: 'remove', element: rect('a') }
+    expect(invertOp(op)).toEqual({ type: 'add', element: rect('a') })
+  })
+  it('swaps prev and next on an update', () => {
+    const op: Op = { type: 'update', id: 'a', prev: { x: 0 }, next: { x: 5 } }
+    expect(invertOp(op)).toEqual({ type: 'update', id: 'a', prev: { x: 5 }, next: { x: 0 } })
   })
 })
 
-describe('redo', () => {
-  it('steps forward after undoing', () => {
-    let h = createHistory(s0)
-    h = pushHistory(h, s1)
-    h = pushHistory(h, s2)
+describe('record / undo / redo', () => {
+  it('undo returns the inverse of the last recorded op', () => {
+    let h = createHistory()
+    h = record(h, { type: 'add', element: rect('a') })
+    const r = undo(h)
+    expect(r).not.toBeNull()
+    expect(r!.op).toEqual({ type: 'remove', element: rect('a') })
+    expect(r!.history.future).toHaveLength(1)
+  })
+  it('redo replays the forward op', () => {
+    let h = createHistory()
+    h = record(h, { type: 'add', element: rect('a') })
     const undone = undo(h)!
     const redone = redo(undone.history)
     expect(redone).not.toBeNull()
-    expect(redone!.scene).toBe(s2)
-    expect(redone!.history.past).toEqual([s0, s1])
+    expect(redone!.op).toEqual({ type: 'add', element: rect('a') })
+    expect(redone!.history.past).toHaveLength(1)
   })
-  it('returns null when there is nothing to redo', () => {
-    const h = createHistory(s0)
-    expect(redo(h)).toBeNull()
+  it('returns null when there is nothing to undo/redo', () => {
+    expect(undo(createHistory())).toBeNull()
+    expect(redo(createHistory())).toBeNull()
+  })
+  it('clears future when a new op is recorded after an undo', () => {
+    let h = createHistory()
+    h = record(h, { type: 'add', element: rect('a') })
+    h = undo(h)!.history
+    h = record(h, { type: 'add', element: rect('b') })
+    expect(h.future).toEqual([])
+    expect(h.past).toHaveLength(1)
+    expect(h.past[0]).toMatchObject({ type: 'add' })
+  })
+  it('caps past at the limit', () => {
+    let h = createHistory(2)
+    for (let i = 0; i < 5; i++) {
+      h = record(h, { type: 'add', element: rect(`e${i}`) })
+    }
+    expect(h.past).toHaveLength(2)
   })
 })
 
-describe('branching after undo', () => {
-  it('clears the future when a new state is pushed after an undo', () => {
-    let h = createHistory(s0)
-    h = pushHistory(h, s1)
-    h = pushHistory(h, s2)
-    h = undo(h)!.history
-    const newState = addElement(s1, rect('c'))
-    h = pushHistory(h, newState)
-    expect(h.future).toEqual([])
-    expect(h.past).toEqual([s0, s1])
-    expect(h.present).toBe(newState)
+describe('round-trip through applyOp', () => {
+  it('undo then redo restores the scene', () => {
+    let scene = addElement(createScene(), rect('a'))
+    let h = createHistory()
+    h = record(h, { type: 'remove', element: rect('a') })
+    scene = applyOp(scene, { type: 'remove', element: rect('a') })
+    expect(getElement(scene, 'a')).toBeUndefined()
+
+    const undone = undo(h)!
+    scene = applyOp(scene, undone.op)
+    expect(getElement(scene, 'a')).toBeDefined()
   })
 })

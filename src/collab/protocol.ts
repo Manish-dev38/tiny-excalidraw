@@ -6,11 +6,9 @@ export type ClientMessage =
   | { type: 'add'; element: ExcalidrawElement }
   | { type: 'update'; id: string; patch: Partial<ExcalidrawElement> }
   | { type: 'remove'; id: string }
-  | { type: 'undo' }
-  | { type: 'redo' }
   | { type: 'cursor'; x: number; y: number; tool: Tool | null }
 
-const MESSAGE_TYPES = ['add', 'update', 'remove', 'undo', 'redo', 'cursor']
+const MESSAGE_TYPES = ['add', 'update', 'remove', 'cursor']
 const TOOLS = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
 
 export function encodeMessage(msg: ClientMessage): string {
@@ -53,10 +51,6 @@ export function decodeMessage(raw: string): ClientMessage {
     case 'remove':
       if (typeof parsed.id !== 'string') throw new Error('Missing id')
       return { type: 'remove', id: parsed.id }
-    case 'undo':
-      return { type: 'undo' }
-    case 'redo':
-      return { type: 'redo' }
     case 'cursor': {
       if (typeof parsed.x !== 'number' || typeof parsed.y !== 'number') {
         throw new Error('Invalid cursor coordinates')

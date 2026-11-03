@@ -18,8 +18,6 @@ const messages: ClientMessage[] = [
   { type: 'add', element: rect },
   { type: 'update', id: 'a', patch: { x: 5 } },
   { type: 'remove', id: 'a' },
-  { type: 'undo' },
-  { type: 'redo' },
   { type: 'cursor', x: 12, y: 34, tool: 'pen' },
   { type: 'cursor', x: 0, y: 0, tool: null },
 ]

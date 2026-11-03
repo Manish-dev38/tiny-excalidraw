@@ -1,6 +1,16 @@
 :root {
-  font-family: 'Assistant', 'Segoe UI', system-ui, sans-serif;
-  color-scheme: light dark;
+  --canvas-bg: #ffffff;
+  --toolbar-bg: #ffffff;
+  --icon-color: #1e1e1e;
+  --icon-bg-active: #e9ecef;
+  --border: #dee2e6;
+  --text: #1e1e1e;
+  --text-secondary: #6d6d6d;
+  --button-bg: #f1f3f5;
+  --button-hover: #e9ecef;
+  --danger: #e03131;
+  --accent: #1971c2;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
 * {
@@ -14,5 +24,243 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
+}
+
+body {
   overflow: hidden;
+  background: var(--canvas-bg);
+  color: var(--text);
+}
+
+/* --- Canvas --- */
+.canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* --- Toolbar --- */
+.toolbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 94vw;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.12);
+  z-index: 10;
+}
+
+.tb-group {
+  display: flex;
+  gap: 2px;
+}
+
+.tb-group + .tb-group {
+  border-left: 1px solid var(--border);
+  margin-left: 6px;
+  padding-left: 6px;
+}
+
+.tb-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--icon-color);
+  border-radius: 7px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tb-btn:hover {
+  background: var(--button-hover);
+}
+
+.tb-btn.active {
+  background: var(--icon-bg-active);
+}
+
+.tb-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tb-zoom {
+  min-width: 46px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch.active {
+  border-color: var(--accent);
+}
+
+.tb-export {
+  display: flex;
+  gap: 2px;
+}
+
+.tb-export .tb-btn {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* --- Status pill --- */
+.status-pill {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--button-bg);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 20px;
+  z-index: 10;
+}
+
+.status-pill.ok {
+  color: #2f9e44;
+}
+
+/* --- Home --- */
+.home {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.home-card {
+  text-align: center;
+  max-width: 440px;
+  width: 100%;
+}
+
+.home-logo {
+  font-size: 56px;
+}
+
+.home-title {
+  font-family: 'Caveat', 'Segoe Print', cursive;
+  font-size: 44px;
+  font-weight: 600;
+  margin: 8px 0 2px;
+}
+
+.home-sub {
+  color: var(--text-secondary);
+  margin: 0 0 24px;
+}
+
+.primary-btn {
+  padding: 12px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+.primary-btn:hover {
+  filter: brightness(1.08);
+}
+
+.recent {
+  margin-top: 36px;
+  text-align: left;
+}
+
+.recent-heading {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.recent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--button-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.recent-open {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recent-when {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recent-delete {
+  background: none;
+  border: 0;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+}
+
+/* --- Inline text editing --- */
+textarea.editing {
+  position: fixed;
+  z-index: 20;
+  min-width: 120px;
+  font-family: 'Caveat', 'Segoe Print', cursive;
+  font-size: 24px;
+  line-height: 1.2;
+  background: transparent;
+  border: 1px dashed var(--accent);
+  outline: none;
+  resize: both;
+  padding: 2px 4px;
+  color: var(--text);
 }
