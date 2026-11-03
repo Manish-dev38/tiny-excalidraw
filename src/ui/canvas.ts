@@ -72,6 +72,7 @@ export class CanvasApp {
   private selfName = availablePeers()
   private abort: AbortController = new AbortController()
   private ro: ResizeObserver | null = null
+  private hintEl: HTMLElement
   private statusEl: HTMLElement
   private toolbarUpdate: (s: ToolbarState) => void
   private savedFlag = false
@@ -105,6 +106,12 @@ export class CanvasApp {
     letterEl.textContent = (mount.roomId[0] || 'B').toUpperCase()
     letterEl.title = `Room ${mount.roomId}`
     this.container.appendChild(letterEl)
+
+    // Empty-canvas invitation (hidden once you draw).
+    this.hintEl = document.createElement('div')
+    this.hintEl.className = 'empty-hint'
+    this.hintEl.textContent = 'Draw with your mouse · Space-drag to pan · Scroll to zoom'
+    this.container.appendChild(this.hintEl)
 
     this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'dark'
     this.applyTheme()
@@ -529,6 +536,8 @@ export class CanvasApp {
     this.render()
     this.toolbarUpdate(this.toolbarState())
     this.persist()
+    // Invite to draw only while the board is empty.
+    this.hintEl.classList.toggle('hidden', this.scene.elements.length > 0)
   }
 
   private handleRemote(msg: ClientMessage) {

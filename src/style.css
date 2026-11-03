@@ -271,6 +271,89 @@ body {
   padding: 4px;
 }
 
+.home-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 14px 0 0;
+}
+
+/* --- Empty-canvas invitation --- */
+.empty-hint {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 44px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--button-bg);
+  border: 1px solid var(--border);
+  padding: 8px 16px;
+  border-radius: 999px;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 9;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.empty-hint.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(6px);
+}
+
+/* --- Visible keyboard focus --- */
+.tb-btn:focus-visible,
+.primary-btn:focus-visible,
+.recent-open:focus-visible,
+.recent-delete:focus-visible,
+.swatch:focus-visible,
+textarea.editing:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- One orchestrated reveal on load --- */
+@keyframes appRise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.home-card {
+  animation: appRise 0.4s ease both;
+}
+
+.toolbar {
+  animation: appRise 0.3s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .toolbar {
+    justify-content: flex-start;
+  }
+  .tb-group + .tb-group {
+    border-left: 0;
+    margin-left: 0;
+    padding-left: 0;
+  }
+  .empty-hint {
+    display: none;
+  }
+}
+
 /* --- Inline text editing --- */
 textarea.editing {
   position: fixed;

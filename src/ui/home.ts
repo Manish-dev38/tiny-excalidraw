@@ -25,14 +25,19 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
 
   const subtitle = document.createElement('p')
   subtitle.className = 'home-sub'
-  subtitle.textContent = 'A lightweight whiteboard to explain ideas together, live.'
+  subtitle.textContent = 'Two of you, one board — draw it out together, live.'
   card.appendChild(subtitle)
 
   const newBtn = document.createElement('button')
   newBtn.className = 'primary-btn'
-  newBtn.textContent = 'Start a new board'
+  newBtn.textContent = 'Create a board'
   newBtn.addEventListener('click', () => cb.onNewRoom())
   card.appendChild(newBtn)
+
+  const hint = document.createElement('p')
+  hint.className = 'home-hint'
+  hint.textContent = 'Send the link to your friend and start drawing.'
+  card.appendChild(hint)
 
   const boards = loadBoards(store)
   if (boards.length > 0) {
