@@ -15,12 +15,15 @@ import type { ClientMessage } from '../collab/protocol'
 import { clearCanvas, drawElement, renderPath, renderShape } from './render'
 import { buildToolbar } from './toolbar'
 import type { ToolbarState, UiTool } from './toolbar'
-import { THEME_VARS, USER_COLORS } from './palette'
+import { THEME_VARS } from './palette'
 import type { Theme } from './palette'
 import { saveBoard } from './storage'
 import type { BoardStore } from './storage'
 import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
+import { hitTestTop, translateElement } from './select'
+import type { ExcalidrawElement } from '../core/types'
+import { assignColor, availablePeers, formatName } from './participants'
 
 const MIN_DRAG = 2
 
@@ -33,6 +36,15 @@ type Gesture =
   | { kind: 'shape'; type: 'rectangle' | 'ellipse' | 'arrow'; start: Point; current: Point }
   | { kind: 'eraser'; points: Point[] }
   | { kind: 'pan'; last: Point }
+  | {
+      kind: 'move'
+      id: string
+      /** The element as it was when the move started. */
+      original: ExcalidrawElement
+      startScene: Point
+      lastScene: Point
+      moved: boolean
+    }
   | null
 
 export interface CanvasMount {
@@ -55,7 +67,10 @@ export class CanvasApp {
   private gesture: Gesture = null
   private spaceDown = false
   private peer: PeerSession
-  private remoteCursor: { x: number; y: number } | null = null
+  private remoteCursor: { x: number; y: number; name: string; color: string } | null = null
+  private selectedId: string | null = null
+  private selfName = availablePeers()
+  private abort: AbortController = new AbortController()
   private statusEl: HTMLElement
   private toolbarUpdate: (s: ToolbarState) => void
   private savedFlag = false
@@ -143,6 +158,11 @@ export class CanvasApp {
         this.statusEl.textContent = 'Link copied'
         this.statusEl.classList.add('ok')
       },
+      onHome: () => {
+        this.destroy()
+        if (this.mount.onHome) this.mount.onHome()
+        else history.replaceState(null, '', location.pathname)
+      },
     }
   }
 
@@ -182,6 +202,7 @@ export class CanvasApp {
     }
     if (this.gesture) this.drawGesture(this.gesture)
     if (this.remoteCursor) this.drawCursor()
+    if (this.selectedId) this.drawSelection()
   }
 
   private drawGesture(g: NonNullable<Gesture>) {
@@ -197,10 +218,55 @@ export class CanvasApp {
   private drawCursor() {
     const c = this.remoteCursor
     if (!c) return
-    this.ctx.fillStyle = USER_COLORS[1]
+    this.ctx.save()
+    // Cursor dot.
+    this.ctx.fillStyle = c.color
     this.ctx.beginPath()
     this.ctx.arc(c.x, c.y, 6, 0, Math.PI * 2)
     this.ctx.fill()
+    // Name label chip.
+    this.ctx.font = '12px Inter, system-ui, sans-serif'
+    const w = this.ctx.measureText(c.name).width + 14
+    const bx = c.x + 10
+    const by = c.y + 8
+    this.ctx.fillStyle = c.color
+    this.roundRect(bx, by, w, 20, 4)
+    this.ctx.fill()
+    this.ctx.fillStyle = '#ffffff'
+    this.ctx.textBaseline = 'middle'
+    this.ctx.fillText(c.name, bx + 7, by + 10)
+    this.ctx.restore()
+  }
+
+  private roundRect(x: number, y: number, w: number, h: number, r: number) {
+    this.ctx.beginPath()
+    this.ctx.moveTo(x + r, y)
+    this.ctx.arcTo(x + w, y, x + w, y + h, r)
+    this.ctx.arcTo(x + w, y + h, x, y + h, r)
+    this.ctx.arcTo(x, y + h, x, y, r)
+    this.ctx.arcTo(x, y, x + w, y, r)
+    this.ctx.closePath()
+  }
+
+  private drawSelection() {
+    const el = getElement(this.scene, this.selectedId!)
+    if (!el) return
+    const b = bboxOf(el)
+    const pad = 4
+    this.ctx.save()
+    this.ctx.strokeStyle = '#1971c2'
+    this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
+    this.ctx.lineWidth = 1 / this.viewport.zoom
+    this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
+    const x = b.minX - pad
+    const y = b.minY - pad
+    const w = b.maxX - b.minX + pad * 2
+    const h = b.maxY - b.minY + pad * 2
+    this.ctx.beginPath()
+    this.ctx.rect(x, y, w, h)
+    this.ctx.fill()
+    this.ctx.stroke()
+    this.ctx.restore()
   }
 
   private bindEvents() {
@@ -216,6 +282,7 @@ export class CanvasApp {
       this.render()
       this.toolbarUpdate(this.toolbarState())
     }, { passive: false })
+    const sig = this.abort.signal
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' && !this.isEditingText()) {
         this.spaceDown = true
@@ -230,11 +297,16 @@ export class CanvasApp {
         e.preventDefault()
         this.redo()
       }
-    })
+      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId && !this.isEditingText()) {
+        e.preventDefault()
+        this.commitRemove(this.selectedId)
+        this.selectedId = null
+      }
+    }, { signal: sig })
     window.addEventListener('keyup', (e) => {
       if (e.code === 'Space') this.spaceDown = false
-    })
-    window.addEventListener('resize', () => this.resize())
+    }, { signal: sig })
+    window.addEventListener('resize', () => this.resize(), { signal: sig })
   }
 
   private isEditingText(): boolean {
@@ -253,6 +325,25 @@ export class CanvasApp {
       return
     }
     const p = this.toScene(e)
+    if (this.tool === 'select') {
+      const hit = hitTestTop(this.scene.elements, p)
+      if (hit) {
+        this.selectedId = hit.id
+        this.gesture = {
+          kind: 'move',
+          id: hit.id,
+          original: hit,
+          startScene: p,
+          lastScene: p,
+          moved: false,
+        }
+      } else {
+        this.selectedId = null
+      }
+      this.render()
+      this.canvas.setPointerCapture(e.pointerId)
+      return
+    }
     switch (this.tool) {
       case 'pen':
         this.gesture = { kind: 'pen', points: [p] }
@@ -282,7 +373,8 @@ export class CanvasApp {
           type: 'cursor',
           x: p.x,
           y: p.y,
-          tool: this.tool === 'eraser' ? null : this.tool,
+          tool: this.tool === 'eraser' || this.tool === 'select' ? null : this.tool,
+          name: this.selfName,
         })
       }
       return
@@ -302,6 +394,16 @@ export class CanvasApp {
       this.gesture.current = p
     } else if (this.gesture.kind === 'eraser') {
       this.gesture.points.push(p)
+    } else if (this.gesture.kind === 'move') {
+      const g = this.gesture
+      const dx = p.x - g.startScene.x
+      const dy = p.y - g.startScene.y
+      if (Math.hypot(dx, dy) >= MIN_DRAG) g.moved = true
+      if (g.moved) {
+        const moved = translateElement(g.original, { dx, dy })
+        this.scene = updateElement(this.scene, g.id, moved as Partial<ExcalidrawElement>)
+      }
+      g.lastScene = p
     }
     this.render()
   }
@@ -329,6 +431,22 @@ export class CanvasApp {
       if (g.points.length > 0) {
         const ids = eraserHitTest(this.scene, g.points, 8)
         for (const id of ids) this.commitRemove(id)
+      }
+    } else if (g.kind === 'move') {
+      if (g.moved) {
+        const dx = g.lastScene.x - g.startScene.x
+        const dy = g.lastScene.y - g.startScene.y
+        const next = translateElement(g.original, { dx, dy })
+        const op: Op = {
+          type: 'update',
+          id: g.id,
+          prev: g.original,
+          next: next as Partial<ExcalidrawElement>,
+        }
+        this.scene = applyOp(this.scene, op)
+        this.history = record(this.history, op)
+        this.broadcastOp(op)
+        this.afterChange()
       }
     }
     this.render()
@@ -395,9 +513,16 @@ export class CanvasApp {
       case 'remove':
         this.scene = removeElement(this.scene, msg.id)
         break
-      case 'cursor':
-        this.remoteCursor = { x: msg.x, y: msg.y }
+      case 'cursor': {
+        const color = assignColor(String(msg.name ?? 'remote'))
+        this.remoteCursor = {
+          x: msg.x,
+          y: msg.y,
+          name: formatName(msg.name ?? 'Peer'),
+          color,
+        }
         break
+      }
     }
     if (msg.type !== 'cursor') {
       this.afterChange()
@@ -529,6 +654,7 @@ export class CanvasApp {
   }
 
   destroy() {
+    this.abort.abort()
     window.clearTimeout(this.persistTimer)
     this.peer.close()
     this.container.remove()

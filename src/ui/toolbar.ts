@@ -1,7 +1,7 @@
 import type { Tool } from '../collab/protocol'
 import { STROKE_COLORS } from './palette'
 
-export type UiTool = Tool | 'eraser'
+export type UiTool = Tool | 'eraser' | 'select'
 
 export interface ToolbarState {
   tool: UiTool
@@ -23,6 +23,7 @@ export interface ToolbarCallbacks {
   onExportPng(): void
   onExportSvg(): void
   onCopyLink(): void
+  onHome(): void
 }
 
 function svgIcon(paths: string[]): string {
@@ -30,6 +31,7 @@ function svgIcon(paths: string[]): string {
 }
 
 const ICONS: Record<UiTool, string> = {
+  select: svgIcon(['<path d="M5 3l14 8-6 1-3 6z"/>']),
   pen: svgIcon(['<path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/>', '<path d="M13 6l3 3"/>']),
   rectangle: svgIcon(['<rect x="4" y="5" width="15" height="13"/>']),
   ellipse: svgIcon(['<ellipse cx="12" cy="12" rx="7.5" ry="6"/>']),
@@ -38,7 +40,7 @@ const ICONS: Record<UiTool, string> = {
   eraser: svgIcon(['<path d="M7 20L3 16l8-9 6 6-4 7z"/>', '<path d="M6 18h12"/>']),
 }
 
-const TOOL_ORDER: UiTool[] = ['pen', 'rectangle', 'ellipse', 'arrow', 'text', 'eraser']
+const TOOL_ORDER: UiTool[] = ['select', 'pen', 'rectangle', 'ellipse', 'arrow', 'text', 'eraser']
 
 function button(
   label: string,
@@ -129,9 +131,11 @@ export function buildToolbar(
   link.innerHTML = svgIcon(['<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/>', '<path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>'])
   const theme = button('Toggle theme', () => cb.onToggleTheme())
   theme.innerHTML = svgIcon(['<circle cx="12" cy="12" r="5"/>', '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'])
+  const home = button('Back to home', () => cb.onHome())
+  home.innerHTML = svgIcon(['<path d="M4 11l8-7 8 7"/>', '<path d="M6 10v9h12v-9"/>'])
   const rightGroup = document.createElement('div')
   rightGroup.className = 'tb-group tb-right'
-  rightGroup.append(link, theme)
+  rightGroup.append(home, link, theme)
   el.appendChild(rightGroup)
 
   return {

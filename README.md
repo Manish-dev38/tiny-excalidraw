@@ -7,13 +7,16 @@ to run.
 
 ## Features
 
-- Tools: pen, rectangle, ellipse, arrow, text, eraser
+- Tools: select, pen, rectangle, ellipse, arrow, text, eraser
+- **Select/move**: pick the select tool (arrow icon), click an element to select
+  it (dashed outline), drag to move it, press Delete to remove it
 - Infinite pan + zoom (mouse wheel / space-drag / middle-drag)
 - Full undo/redo (Ctrl/Cmd+Z, Ctrl+Shift+Z)
-- Real-time collaboration with live cursor presence
+- Real-time collaboration with live cursor presence, including name labels
 - Boards persist in local storage (per room), with a recent-boards list
 - Export to **PNG** and **SVG**
 - Light/dark theme (Excalidraw-inspired), in-house iconography
+- "Back to home" button returns to the recent-boards screen
 
 ## Run locally
 

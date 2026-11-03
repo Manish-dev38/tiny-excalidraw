@@ -6,7 +6,7 @@ export type ClientMessage =
   | { type: 'add'; element: ExcalidrawElement }
   | { type: 'update'; id: string; patch: Partial<ExcalidrawElement> }
   | { type: 'remove'; id: string }
-  | { type: 'cursor'; x: number; y: number; tool: Tool | null }
+  | { type: 'cursor'; x: number; y: number; tool: Tool | null; name?: string }
 
 const MESSAGE_TYPES = ['add', 'update', 'remove', 'cursor']
 const TOOLS = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
@@ -59,7 +59,8 @@ export function decodeMessage(raw: string): ClientMessage {
       if (tool !== null && (typeof tool !== 'string' || !TOOLS.includes(tool))) {
         throw new Error('Invalid tool')
       }
-      return { type: 'cursor', x: parsed.x, y: parsed.y, tool: tool as Tool | null }
+      const name = typeof parsed.name === 'string' ? parsed.name : undefined
+      return { type: 'cursor', x: parsed.x, y: parsed.y, tool: tool as Tool | null, name }
     }
     default:
       throw new Error(`Unknown message type: ${String(type)}`)

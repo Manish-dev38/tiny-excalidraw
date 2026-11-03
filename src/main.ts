@@ -20,7 +20,12 @@ function navigateToRoom(roomId: string) {
       initialScene = undefined
     }
   }
-  const canvas = new CanvasApp({ roomId, store, initialScene })
+  const canvas = new CanvasApp({
+    roomId,
+    store,
+    initialScene,
+    onHome: renderHomeScreen,
+  })
   app.replaceChildren(canvas.el)
 }
 
