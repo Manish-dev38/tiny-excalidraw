@@ -15,7 +15,8 @@ to run.
 - Real-time collaboration with live cursor presence, including name labels
 - Boards persist in local storage (per room), with a recent-boards list
 - Export to **PNG** and **SVG**
-- Light/dark theme (Excalidraw-inspired), in-house iconography
+- Dark theme by default (Excalidraw-inspired), toggleable to light; in-house iconography
+- A single-letter board badge below the toolbar (first character of the room id)
 - "Back to home" button returns to the recent-boards screen
 
 ## Run locally

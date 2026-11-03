@@ -1,15 +1,15 @@
 :root {
-  --canvas-bg: #ffffff;
-  --toolbar-bg: #ffffff;
-  --icon-color: #1e1e1e;
-  --icon-bg-active: #e9ecef;
-  --border: #dee2e6;
-  --text: #1e1e1e;
-  --text-secondary: #6d6d6d;
-  --button-bg: #f1f3f5;
-  --button-hover: #e9ecef;
-  --danger: #e03131;
-  --accent: #1971c2;
+  --canvas-bg: #141414;
+  --toolbar-bg: #1b1b21;
+  --icon-color: #e9ecef;
+  --icon-bg-active: #404068;
+  --border: #2c2c3a;
+  --text: #e9ecef;
+  --text-secondary: #adb5bd;
+  --button-bg: #26262e;
+  --button-hover: #2f2f3a;
+  --danger: #ff6b6b;
+  --accent: #6d8dff;
   font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
@@ -130,6 +130,29 @@ body {
   padding: 0 8px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+/* --- Board letter badge --- */
+.board-letter {
+  position: fixed;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--icon-bg-active);
+  color: var(--icon-color);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: 'Caveat', 'Segoe Print', cursive;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.25);
+  z-index: 9;
+  cursor: default;
+  user-select: none;
 }
 
 /* --- Status pill --- */

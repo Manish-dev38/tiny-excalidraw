@@ -99,8 +99,20 @@ export class CanvasApp {
     this.statusEl.textContent = 'Connecting…'
     this.container.appendChild(this.statusEl)
 
-    this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'light'
+    // Single-letter board badge below the toolbar (first char of the room id).
+    const letterEl = document.createElement('div')
+    letterEl.className = 'board-letter'
+    letterEl.textContent = (mount.roomId[0] || 'B').toUpperCase()
+    letterEl.title = `Room ${mount.roomId}`
+    this.container.appendChild(letterEl)
+
+    this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'dark'
     this.applyTheme()
+    // Default stroke should be visible on the bg (light on dark, dark on light).
+    if (this.theme === 'dark') {
+      this.style = { ...this.style, strokeColor: '#ffffff' }
+    }
+    this.toolbarUpdate(this.toolbarState())
     this.bindEvents()
     this.resize()
 
