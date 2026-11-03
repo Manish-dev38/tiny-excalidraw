@@ -71,6 +71,7 @@ export class CanvasApp {
   private selectedId: string | null = null
   private selfName = availablePeers()
   private abort: AbortController = new AbortController()
+  private ro: ResizeObserver | null = null
   private statusEl: HTMLElement
   private toolbarUpdate: (s: ToolbarState) => void
   private savedFlag = false
@@ -181,15 +182,29 @@ export class CanvasApp {
   }
 
   private resize() {
+    const w = this.canvas.clientWidth
+    const h = this.canvas.clientHeight
+    if (!w || !h) return
     const dpr = window.devicePixelRatio || 1
-    this.canvas.width = Math.floor(this.canvas.clientWidth * dpr)
-    this.canvas.height = Math.floor(this.canvas.clientHeight * dpr)
+    const bw = Math.floor(w * dpr)
+    const bh = Math.floor(h * dpr)
+    if (this.canvas.width !== bw || this.canvas.height !== bh) {
+      this.canvas.width = bw
+      this.canvas.height = bh
+    }
     this.render()
   }
 
   private render() {
-    if (!this.canvas.clientWidth) return
+    if (!this.canvas.clientWidth || !this.canvas.clientHeight) return
+    // Belt-and-suspenders: ensure the backing buffer matches the element size.
     const dpr = window.devicePixelRatio || 1
+    const bw = Math.floor(this.canvas.clientWidth * dpr)
+    const bh = Math.floor(this.canvas.clientHeight * dpr)
+    if (this.canvas.width !== bw || this.canvas.height !== bh) {
+      this.canvas.width = bw
+      this.canvas.height = bh
+    }
     const dvp: Viewport = {
       zoom: this.viewport.zoom * dpr,
       x: this.viewport.x * dpr,
@@ -307,6 +322,10 @@ export class CanvasApp {
       if (e.code === 'Space') this.spaceDown = false
     }, { signal: sig })
     window.addEventListener('resize', () => this.resize(), { signal: sig })
+    // Resize when the canvas is laid out, resized, or first painted.
+    this.ro = new ResizeObserver(() => this.resize())
+    this.ro.observe(this.canvas)
+    requestAnimationFrame(() => this.resize())
   }
 
   private isEditingText(): boolean {
@@ -655,6 +674,8 @@ export class CanvasApp {
 
   destroy() {
     this.abort.abort()
+    this.ro?.disconnect()
+    this.ro = null
     window.clearTimeout(this.persistTimer)
     this.peer.close()
     this.container.remove()
