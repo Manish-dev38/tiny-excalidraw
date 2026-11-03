@@ -24,6 +24,9 @@ pnpm-debug.log*
 Thumbs.db
 *.swp
 
+# Local reference assets (not meant for the repo)
+Ref/
+
 # Environment
 .env
 .env.*
