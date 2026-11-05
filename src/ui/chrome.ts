@@ -15,6 +15,7 @@ export interface ChromeState {
 
 export interface ChromeCallbacks {
   onTogglePanel(): void
+  onSave(): void
   onShare(): void
   onExportPng(): void
   onExportSvg(): void
@@ -103,6 +104,15 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
   const topRight = document.createElement('div')
   topRight.className = 'top-actions'
 
+  const save = iconButton(
+    'Save board (Ctrl+S)',
+    svg(
+      '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v6h8V4"/><path d="M8 20v-6h8v6"/>',
+    ),
+    'chrome-btn save-btn',
+  )
+  save.addEventListener('click', () => cb.onSave())
+
   const share = document.createElement('button')
   share.type = 'button'
   share.className = 'share-btn'
@@ -170,7 +180,7 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
   menu.append(sep, room)
 
   menuWrap.append(menuBtn, menu)
-  topRight.append(share, menuWrap)
+  topRight.append(save, share, menuWrap)
 
   let detachMenu: (() => void) | null = null
 

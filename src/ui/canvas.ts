@@ -5,6 +5,8 @@ import type { History, Op } from '../core/history'
 import { buildRoomUrl } from '../core/room'
 import { toSVG } from '../core/export'
 import { serializeScene } from '../core/serialize'
+import { defaultFileName, serializeBoardFile } from '../core/boardFile'
+import { downloadTextFile } from './download'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
@@ -91,6 +93,7 @@ export class CanvasApp {
   private chromeUpdate: (state: ChromeState) => void
   private savedFlag = false
   private persistTimer: number | undefined
+  private finishText: ((keep: boolean) => void) | null = null
 
   constructor(private mount: CanvasMount) {
     this.container = document.createElement('div')
@@ -167,6 +170,7 @@ export class CanvasApp {
         this.panelMode = visible ? 'closed' : 'open'
         this.syncUi()
       },
+      onSave: () => this.saveBoardFile(),
       onShare: () => {
         const url = buildRoomUrl(this.mount.roomId)
         void copyText(url).then((ok) =>
@@ -404,6 +408,11 @@ export class CanvasApp {
     }, { passive: false })
     const sig = this.abort.signal
     window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        this.saveBoardFile()
+        return
+      }
       if (this.isEditingText()) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -453,6 +462,19 @@ export class CanvasApp {
 
   private isEditingText(): boolean {
     return !!this.container.querySelector('textarea.editing')
+  }
+
+  /** Commits an open inline editor so file actions include the visible text. */
+  private commitOpenEditor(): void {
+    this.finishText?.(true)
+  }
+
+  private saveBoardFile(): void {
+    this.commitOpenEditor()
+    downloadTextFile(
+      defaultFileName(this.mount.roomId),
+      serializeBoardFile(this.scene, this.mount.roomId),
+    )
   }
 
   private toScene(e: { clientX: number; clientY: number }): Point {
@@ -710,6 +732,7 @@ export class CanvasApp {
     const finish = (keep: boolean) => {
       if (done) return
       done = true
+      if (this.finishText === finish) this.finishText = null
       const text = ta.value.trim()
       ta.remove()
       this.syncUi()
@@ -736,6 +759,7 @@ export class CanvasApp {
     })
     ta.addEventListener('blur', () => finish(true))
 
+    this.finishText = finish
     grow()
     ta.focus()
     // The pointer gesture that created the editor must not steal focus back.
