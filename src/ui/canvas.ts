@@ -9,11 +9,12 @@ import {
   defaultFileName,
   fileNameFromSource,
   MAX_FILE_BYTES,
+  normalizeFileName,
   parseBoardFile,
   serializeBoardFile,
 } from '../core/boardFile'
 import { downloadTextFile } from './download'
-import { confirmReplaceBoard, showImportError } from './dialogs'
+import { confirmReplaceBoard, showImportError, showSaveAsDialog } from './dialogs'
 import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
@@ -207,6 +208,9 @@ export class CanvasApp {
         this.syncUi()
       },
       onSave: () => this.saveBoardFile(),
+      onSaveAs: () => {
+        void this.saveBoardAsFile()
+      },
       onImport: () => {
         this.commitOpenEditor()
         this.fileInput.click()
@@ -450,7 +454,8 @@ export class CanvasApp {
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        this.saveBoardFile()
+        if (e.shiftKey) void this.saveBoardAsFile()
+        else this.saveBoardFile()
         return
       }
       if (this.isEditingText()) return
@@ -517,6 +522,19 @@ export class CanvasApp {
 
   private saveBoardFile(): void {
     this.commitOpenEditor()
+    downloadTextFile(this.fileName, serializeBoardFile(this.scene, this.mount.roomId))
+  }
+
+  private async saveBoardAsFile(): Promise<void> {
+    this.commitOpenEditor()
+    const chosen = await showSaveAsDialog(this.fileName)
+    if (chosen === null) return
+    this.fileName = normalizeFileName(
+      chosen,
+      defaultFileName(this.mount.roomId),
+    )
+    this.autosave.change()
+    await this.autosave.flush()
     downloadTextFile(this.fileName, serializeBoardFile(this.scene, this.mount.roomId))
   }
 

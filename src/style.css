@@ -766,6 +766,38 @@ button {
   line-height: 1.5;
 }
 
+.dialog-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.dialog-input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  background: var(--canvas-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dialog-input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.dialog-hint {
+  margin: 0 0 20px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
