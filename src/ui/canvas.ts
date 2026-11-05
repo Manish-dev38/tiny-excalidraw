@@ -14,6 +14,7 @@ import {
 } from '../core/boardFile'
 import { downloadTextFile } from './download'
 import { confirmReplaceBoard, showImportError } from './dialogs'
+import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
@@ -98,8 +99,8 @@ export class CanvasApp {
   private toolbarUpdate: (tool: UiTool) => void
   private panelUpdate: (state: PropertiesState) => void
   private chromeUpdate: (state: ChromeState) => void
-  private savedFlag = false
-  private persistTimer: number | undefined
+  private autosave: Autosave
+  private saveState: AutosaveState = { status: 'saved' }
   private finishText: ((keep: boolean) => void) | null = null
   private fileName: string
   private fileInput: HTMLInputElement
@@ -132,6 +133,20 @@ export class CanvasApp {
 
     this.chrome = buildChrome(this.chromeState(), this.chromeCallbacks())
     this.chromeUpdate = this.chrome.update
+
+    this.autosave = createAutosave({
+      save: () =>
+        this.mount.repo.save({
+          roomId: this.mount.roomId,
+          data: serializeScene(this.scene),
+          updatedAt: Date.now(),
+          fileName: this.fileName,
+        }),
+      onStatus: (state) => {
+        this.saveState = state
+        this.syncUi()
+      },
+    })
 
     this.container.append(
       toolbar.el,
@@ -177,7 +192,7 @@ export class CanvasApp {
       },
     })
 
-    if (!mount.initialScene) this.persist()
+    if (!mount.initialScene) this.autosave.change()
   }
 
   get el(): HTMLElement {
@@ -222,9 +237,7 @@ export class CanvasApp {
         this.syncUi()
       },
       onHome: () => {
-        this.destroy()
-        if (this.mount.onHome) this.mount.onHome()
-        else history.replaceState(null, '', location.pathname)
+        void this.leaveToHome()
       },
       onZoom: (factor: number) => {
         this.viewport = zoomAt(this.viewport, this.center(), factor)
@@ -266,6 +279,8 @@ export class CanvasApp {
     const selection = this.selectedElement()
     return {
       status: this.status,
+      saveStatus: this.saveState.status,
+      saveReason: this.saveState.reason,
       canUndo: this.history.past.length > 0,
       canRedo: this.history.future.length > 0,
       zoomPct: this.viewport.zoom * 100,
@@ -479,6 +494,12 @@ export class CanvasApp {
       if (e.code === 'Space') this.spaceDown = false
     }, { signal: sig })
     window.addEventListener('resize', () => this.resize(), { signal: sig })
+    window.addEventListener('pagehide', () => {
+      void this.autosave.flush()
+    }, { signal: sig })
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void this.autosave.flush()
+    }, { signal: sig })
     // Resize when the canvas is laid out, resized, or first painted.
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(this.canvas)
@@ -526,7 +547,7 @@ export class CanvasApp {
     this.fitToScene()
     this.render()
     this.syncUi()
-    this.persist()
+    this.autosave.change()
   }
 
   private toScene(e: { clientX: number; clientY: number }): Point {
@@ -720,7 +741,7 @@ export class CanvasApp {
   private afterChange() {
     this.render()
     this.syncUi()
-    this.persist()
+    this.autosave.change()
   }
 
   private handleRemote(msg: ClientMessage) {
@@ -902,30 +923,19 @@ export class CanvasApp {
     for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v)
   }
 
-  private persist() {
-    if (this.savedFlag) return
-    this.savedFlag = true
-    window.clearTimeout(this.persistTimer)
-    this.persistTimer = window.setTimeout(() => {
-      this.savedFlag = false
-      void this.mount.repo
-        .save({
-          roomId: this.mount.roomId,
-          data: serializeScene(this.scene),
-          updatedAt: Date.now(),
-          fileName: this.fileName,
-        })
-        .catch(() => {
-          /* Status handling is added by the autosave ticket. */
-        })
-    }, 300)
+  private async leaveToHome(): Promise<void> {
+    await this.autosave.flush()
+    this.destroy()
+    history.replaceState(null, '', location.pathname)
+    if (this.mount.onHome) this.mount.onHome()
   }
 
   destroy() {
+    void this.autosave.flush()
+    this.autosave.dispose()
     this.abort.abort()
     this.ro?.disconnect()
     this.ro = null
-    window.clearTimeout(this.persistTimer)
     this.peer.close()
     this.container.remove()
   }

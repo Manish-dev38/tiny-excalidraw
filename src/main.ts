@@ -12,6 +12,7 @@ let repo: BoardRepository
 
 async function navigateToRoom(roomId: string) {
   history.replaceState(null, '', `#room=${encodeURIComponent(roomId)}`)
+  await repo.setMeta('lastRoomId', roomId).catch(() => {})
   let initialScene: Scene | undefined
   const saved = await repo.get(roomId)
   if (saved) {
@@ -34,6 +35,7 @@ async function navigateToRoom(roomId: string) {
 }
 
 async function renderHomeScreen() {
+  await repo.setMeta('lastRoomId', null).catch(() => {})
   const boards = await repo.list()
   app.replaceChildren(
     renderHome(boards, {
@@ -72,8 +74,13 @@ async function boot() {
   })
 
   const roomId = parseRoomFromHash(location.hash)
-  if (roomId) await navigateToRoom(roomId)
-  else await renderHomeScreen()
+  if (roomId) {
+    await navigateToRoom(roomId)
+  } else {
+    const lastRoomId = await repo.getMeta<string>('lastRoomId')
+    if (lastRoomId) await navigateToRoom(lastRoomId)
+    else await renderHomeScreen()
+  }
 }
 
 void boot()

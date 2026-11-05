@@ -1,8 +1,11 @@
 import type { Theme } from './palette'
 import { statusLabel, type ConnectionStatus } from './uiState'
+import type { SaveStatus } from './autosave'
 
 export interface ChromeState {
   status: ConnectionStatus
+  saveStatus: SaveStatus
+  saveReason?: string
   canUndo: boolean
   canRedo: boolean
   zoomPct: number
@@ -71,6 +74,12 @@ function menuItem(label: string, onClick: () => void, shortcut?: string): HTMLBu
   return b
 }
 
+const SAVE_LABELS: Record<SaveStatus, string> = {
+  saving: 'Saving…',
+  saved: 'Saved',
+  error: 'Not saved',
+}
+
 const HELP_ROWS: Array<[string, string]> = [
   ['V', 'Select'],
   ['H', 'Hand'],
@@ -104,6 +113,17 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
   // --- Top-right: Share + overflow menu. ---
   const topRight = document.createElement('div')
   topRight.className = 'top-actions'
+
+  const saveStatusEl = document.createElement('span')
+  saveStatusEl.className = 'save-status saved'
+  const saveStatusDot = document.createElement('span')
+  saveStatusDot.className = 'save-status-dot'
+  saveStatusDot.setAttribute('aria-hidden', 'true')
+  const saveStatusLabel = document.createElement('span')
+  saveStatusLabel.className = 'save-status-label'
+  saveStatusLabel.textContent = 'Saved'
+  saveStatusEl.append(saveStatusDot, saveStatusLabel)
+  saveStatusEl.title = 'Saved to this browser'
 
   const save = iconButton(
     'Save board (Ctrl+S)',
@@ -185,7 +205,7 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
   menu.append(sep, room)
 
   menuWrap.append(menuBtn, menu)
-  topRight.append(save, share, menuWrap)
+  topRight.append(saveStatusEl, save, share, menuWrap)
 
   let detachMenu: (() => void) | null = null
 
@@ -347,6 +367,14 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
       zoomPct.textContent = `${Math.round(state.zoomPct)}%`
       statusDot.className = `status-dot ${state.status}`
       statusDot.title = statusLabel(state.status)
+      saveStatusEl.className = `save-status ${state.saveStatus}`
+      saveStatusLabel.textContent = SAVE_LABELS[state.saveStatus]
+      saveStatusEl.title =
+        state.saveStatus === 'error'
+          ? state.saveReason ?? 'Could not save this board.'
+          : state.saveStatus === 'saving'
+            ? 'Saving to this browser'
+            : 'Saved to this browser'
       share.title = `Copy room link · ${statusLabel(state.status)}`
       hamburger.classList.toggle('active', state.panelVisible)
       hamburger.setAttribute('aria-expanded', String(state.panelVisible))
