@@ -1,4 +1,4 @@
-import { bboxOf, type BBox } from './geometry'
+import { bboxOf, LINE_HEIGHT, type BBox } from './geometry'
 import type { Scene } from './scene'
 import type { ExcalidrawElement } from './types'
 
@@ -49,8 +49,16 @@ function elementToSVG(el: ExcalidrawElement): string {
         .join(' ')
       return `<path d="${d}" fill="none" stroke="${esc(el.strokeColor)}" stroke-width="${el.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/>`
     }
-    case 'text':
-      return `<text x="${el.x}" y="${el.y + el.fontSize}" font-size="${el.fontSize}" fill="${esc(el.strokeColor)}">${esc(el.text)}</text>`
+    case 'text': {
+      const lines = el.text.split('\n')
+      const spans = lines
+        .map((line, i) => {
+          const dy = i === 0 ? el.fontSize : el.fontSize * LINE_HEIGHT
+          return `<tspan x="${el.x}" dy="${dy}">${esc(line)}</tspan>`
+        })
+        .join('')
+      return `<text font-size="${el.fontSize}" font-family="Caveat, Segoe Print, cursive" fill="${esc(el.strokeColor)}">${spans}</text>`
+    }
   }
 }
 

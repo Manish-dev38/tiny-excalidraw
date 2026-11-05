@@ -14,7 +14,18 @@ import { startPeerSession, type PeerSession } from '../collab/peer'
 import type { ClientMessage } from '../collab/protocol'
 import { clearCanvas, drawElement, renderPath, renderShape } from './render'
 import { buildToolbar } from './toolbar'
-import type { ToolbarState, UiTool } from './toolbar'
+import { buildProperties } from './properties'
+import type { PropertiesState, StyleValues } from './properties'
+import { buildChrome } from './chrome'
+import type { Chrome, ChromeState } from './chrome'
+import {
+  SHORTCUT_TO_TOOL,
+  hintFor,
+  isPanelVisible,
+  type ConnectionStatus,
+  type PanelMode,
+  type UiTool,
+} from './uiState'
 import { THEME_VARS } from './palette'
 import type { Theme } from './palette'
 import { saveBoard } from './storage'
@@ -61,7 +72,8 @@ export class CanvasApp {
   private scene: Scene
   private history: History
   private viewport: Viewport = { x: 40, y: 40, zoom: 1 }
-  private tool: UiTool = 'pen'
+  private tool: UiTool = 'select'
+  private panelMode: PanelMode = 'auto'
   private style: DrawStyle = { strokeColor: '#1e1e1e', background: 'transparent', strokeWidth: 2 }
   private theme: Theme = 'light'
   private gesture: Gesture = null
@@ -72,9 +84,11 @@ export class CanvasApp {
   private selfName = availablePeers()
   private abort: AbortController = new AbortController()
   private ro: ResizeObserver | null = null
-  private hintEl: HTMLElement
-  private statusEl: HTMLElement
-  private toolbarUpdate: (s: ToolbarState) => void
+  private status: ConnectionStatus = 'connecting'
+  private chrome: Chrome
+  private toolbarUpdate: (tool: UiTool) => void
+  private panelUpdate: (state: PropertiesState) => void
+  private chromeUpdate: (state: ChromeState) => void
   private savedFlag = false
   private persistTimer: number | undefined
 
@@ -86,32 +100,35 @@ export class CanvasApp {
 
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'canvas'
+    this.canvas.tabIndex = 0
+    this.canvas.setAttribute('aria-label', 'Drawing canvas')
     const ctx = this.canvas.getContext('2d')
     if (!ctx) throw new Error('2D canvas not supported')
     this.ctx = ctx
     this.container.appendChild(this.canvas)
 
-    const tb = buildToolbar(this.toolbarState(), this.callbacks())
-    this.toolbarUpdate = tb.update
-    this.container.appendChild(tb.el)
+    const toolbar = buildToolbar(this.tool, (tool) => this.selectTool(tool))
+    this.toolbarUpdate = toolbar.update
 
-    this.statusEl = document.createElement('div')
-    this.statusEl.className = 'status-pill'
-    this.statusEl.textContent = 'Connecting…'
-    this.container.appendChild(this.statusEl)
+    const panel = buildProperties(this.panelState(), {
+      onStrokeColor: (color) => this.setStyle({ strokeColor: color }),
+      onBackground: (color) => this.setStyle({ background: color }),
+      onStrokeWidth: (width) => this.setStyle({ strokeWidth: width }),
+    })
+    this.panelUpdate = panel.update
 
-    // Single-letter board badge below the toolbar (first char of the room id).
-    const letterEl = document.createElement('div')
-    letterEl.className = 'board-letter'
-    letterEl.textContent = (mount.roomId[0] || 'B').toUpperCase()
-    letterEl.title = `Room ${mount.roomId}`
-    this.container.appendChild(letterEl)
+    this.chrome = buildChrome(this.chromeState(), this.chromeCallbacks())
+    this.chromeUpdate = this.chrome.update
 
-    // Empty-canvas invitation (hidden once you draw).
-    this.hintEl = document.createElement('div')
-    this.hintEl.className = 'empty-hint'
-    this.hintEl.textContent = 'Draw with your mouse · Space-drag to pan · Scroll to zoom'
-    this.container.appendChild(this.hintEl)
+    this.container.append(
+      toolbar.el,
+      this.chrome.topLeft,
+      this.chrome.topRight,
+      this.chrome.bottomLeft,
+      this.chrome.bottomRight,
+      this.chrome.hint,
+      panel.el,
+    )
 
     this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'dark'
     this.applyTheme()
@@ -119,16 +136,17 @@ export class CanvasApp {
     if (this.theme === 'dark') {
       this.style = { ...this.style, strokeColor: '#ffffff' }
     }
-    this.toolbarUpdate(this.toolbarState())
+    this.updateCursor()
     this.bindEvents()
     this.resize()
+    this.syncUi()
 
     this.peer = startPeerSession(mount.roomId, {
       onMessage: (m) => this.handleRemote(m),
       onStatus: (_role, status) => {
-        this.statusEl.textContent =
-          status === 'connected' ? 'Live' : status === 'error' ? 'Friend offline' : 'Connecting…'
-        this.statusEl.classList.toggle('ok', status === 'connected')
+        this.status =
+          status === 'connected' ? 'live' : status === 'error' ? 'offline' : 'connecting'
+        this.syncUi()
       },
       onConnected: (role) => {
         if (role === 'host') this.broadcastScene()
@@ -142,58 +160,126 @@ export class CanvasApp {
     return this.container
   }
 
-  private callbacks() {
+  private chromeCallbacks() {
     return {
-      onSelectTool: (t: UiTool) => {
-        this.tool = t
-        this.toolbarUpdate(this.toolbarState())
+      onTogglePanel: () => {
+        const visible = isPanelVisible(this.tool, this.selectedElement(), this.panelMode)
+        this.panelMode = visible ? 'closed' : 'open'
+        this.syncUi()
       },
-      onSelectStrokeColor: (c: string) => {
-        this.style = { ...this.style, strokeColor: c }
-        this.toolbarUpdate(this.toolbarState())
-      },
-      onUndo: () => this.undo(),
-      onRedo: () => this.redo(),
-      onZoomDelta: (f: number) => {
-        this.viewport = zoomAt(this.viewport, this.center(), f)
-        this.render()
-        this.toolbarUpdate(this.toolbarState())
-      },
-      onZoomReset: () => {
-        this.viewport = { x: 40, y: 40, zoom: 1 }
-        this.render()
-        this.toolbarUpdate(this.toolbarState())
-      },
-      onFit: () => this.fitToScene(),
-      onToggleTheme: () => {
-        this.theme = this.theme === 'light' ? 'dark' : 'light'
-        localStorage.setItem('tiny-theme', this.theme)
-        this.applyTheme()
-        this.render()
+      onShare: () => {
+        const url = buildRoomUrl(this.mount.roomId)
+        void copyText(url).then((ok) =>
+          this.chrome.flashShare(ok ? 'Link copied' : 'Copy failed'),
+        )
       },
       onExportPng: () => this.exportPng(),
       onExportSvg: () => this.exportSvg(),
-      onCopyLink: () => {
-        void navigator.clipboard.writeText(buildRoomUrl(this.mount.roomId))
-        this.statusEl.textContent = 'Link copied'
-        this.statusEl.classList.add('ok')
+      onFit: () => this.fitToScene(),
+      onToggleTheme: () => {
+        const previousDefault = this.theme === 'dark' ? '#ffffff' : '#1e1e1e'
+        this.theme = this.theme === 'light' ? 'dark' : 'light'
+        localStorage.setItem('tiny-theme', this.theme)
+        // Keep the default stroke visible after a theme flip; a colour the user
+        // picked explicitly is left alone.
+        if (this.style.strokeColor === previousDefault) {
+          this.style = {
+            ...this.style,
+            strokeColor: this.theme === 'dark' ? '#ffffff' : '#1e1e1e',
+          }
+        }
+        this.applyTheme()
+        this.render()
+        this.syncUi()
       },
       onHome: () => {
         this.destroy()
         if (this.mount.onHome) this.mount.onHome()
         else history.replaceState(null, '', location.pathname)
       },
+      onZoom: (factor: number) => {
+        this.viewport = zoomAt(this.viewport, this.center(), factor)
+        this.render()
+        this.syncUi()
+      },
+      onZoomReset: () => {
+        this.viewport = zoomAt(this.viewport, this.center(), 1 / this.viewport.zoom)
+        this.render()
+        this.syncUi()
+      },
+      onUndo: () => this.undo(),
+      onRedo: () => this.redo(),
     }
   }
 
-  private toolbarState(): ToolbarState {
+  private selectedElement(): ExcalidrawElement | null {
+    if (!this.selectedId) return null
+    return getElement(this.scene, this.selectedId) ?? null
+  }
+
+  private panelState(): PropertiesState {
+    const selection = this.selectedElement()
     return {
       tool: this.tool,
+      selection,
+      mode: this.panelMode,
+      values: selection
+        ? {
+            strokeColor: selection.strokeColor,
+            background: selection.background,
+            strokeWidth: selection.strokeWidth,
+          }
+        : { ...this.style },
+    }
+  }
+
+  private chromeState(): ChromeState {
+    const selection = this.selectedElement()
+    return {
+      status: this.status,
       canUndo: this.history.past.length > 0,
       canRedo: this.history.future.length > 0,
       zoomPct: this.viewport.zoom * 100,
-      strokeColor: this.style.strokeColor,
+      roomId: this.mount.roomId,
+      theme: this.theme,
+      panelVisible: isPanelVisible(this.tool, selection, this.panelMode),
+      hint: hintFor(this.tool, selection),
+      hintVisible: !this.isEditingText(),
     }
+  }
+
+  private syncUi() {
+    this.toolbarUpdate(this.tool)
+    this.panelUpdate(this.panelState())
+    this.chromeUpdate(this.chromeState())
+  }
+
+  private selectTool(tool: UiTool) {
+    this.tool = tool
+    if (tool !== 'select') this.selectedId = null
+    // Keep an explicit hamburger pin; `auto` continues to follow the tool.
+    this.updateCursor()
+    this.syncUi()
+    this.render()
+  }
+
+  private updateCursor() {
+    this.canvas.dataset.tool = this.tool
+  }
+
+  private setStyle(patch: Partial<StyleValues>) {
+    this.style = { ...this.style, ...patch }
+    const selection = this.selectedElement()
+    if (!selection) {
+      this.render()
+      this.syncUi()
+      return
+    }
+    const op: Op = { type: 'update', id: selection.id, prev: { ...selection }, next: patch }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    this.afterChange()
   }
 
   private center(): Point {
@@ -229,7 +315,7 @@ export class CanvasApp {
       x: this.viewport.x * dpr,
       y: this.viewport.y * dpr,
     }
-    const bg = this.theme === 'dark' ? '#141414' : '#ffffff'
+    const bg = this.theme === 'dark' ? '#121212' : '#ffffff'
     clearCanvas(this.ctx, dvp, bg)
     for (const el of this.scene.elements) {
       drawElement(this.ctx, el)
@@ -314,27 +400,45 @@ export class CanvasApp {
       const d = e.ctrlKey ? Math.exp(-e.deltaY * 0.004) : Math.exp(-e.deltaY * 0.0015)
       this.viewport = zoomAt(this.viewport, this.toScene(e), d)
       this.render()
-      this.toolbarUpdate(this.toolbarState())
+      this.syncUi()
     }, { passive: false })
     const sig = this.abort.signal
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !this.isEditingText()) {
-        this.spaceDown = true
-        e.preventDefault()
-      }
+      if (this.isEditingText()) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) this.redo()
         else this.undo()
+        return
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault()
         this.redo()
+        return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId && !this.isEditingText()) {
+      if (e.key === 'Escape') {
+        this.selectedId = null
+        this.selectTool('select')
+        return
+      }
+      if (e.code === 'Space') {
+        this.spaceDown = true
+        e.preventDefault()
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId) {
         e.preventDefault()
         this.commitRemove(this.selectedId)
         this.selectedId = null
+        this.syncUi()
+        return
+      }
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const tool = SHORTCUT_TO_TOOL[e.key.toLowerCase()]
+        if (tool) {
+          e.preventDefault()
+          this.selectTool(tool)
+        }
       }
     }, { signal: sig })
     window.addEventListener('keyup', (e) => {
@@ -357,8 +461,9 @@ export class CanvasApp {
   }
 
   private onPointerDown(e: PointerEvent) {
-    if (e.button === 2 || this.spaceDown) {
+    if (e.button === 2 || this.spaceDown || this.tool === 'hand') {
       this.gesture = { kind: 'pan', last: { x: e.clientX, y: e.clientY } }
+      this.canvas.classList.add('is-panning')
       this.canvas.setPointerCapture(e.pointerId)
       return
     }
@@ -378,6 +483,7 @@ export class CanvasApp {
       } else {
         this.selectedId = null
       }
+      this.syncUi()
       this.render()
       this.canvas.setPointerCapture(e.pointerId)
       return
@@ -395,6 +501,7 @@ export class CanvasApp {
         this.gesture = { kind: 'eraser', points: [p] }
         break
       case 'text':
+        e.preventDefault()
         this.beginText(p)
         return
       default:
@@ -411,7 +518,10 @@ export class CanvasApp {
           type: 'cursor',
           x: p.x,
           y: p.y,
-          tool: this.tool === 'eraser' || this.tool === 'select' ? null : this.tool,
+          tool:
+            this.tool === 'eraser' || this.tool === 'select' || this.tool === 'hand'
+              ? null
+              : this.tool,
           name: this.selfName,
         })
       }
@@ -449,6 +559,7 @@ export class CanvasApp {
   private onPointerUp() {
     const g = this.gesture
     this.gesture = null
+    this.canvas.classList.remove('is-panning')
     if (!g) return
     if (g.kind === 'pan') return
     if (g.kind === 'pen') {
@@ -534,10 +645,8 @@ export class CanvasApp {
 
   private afterChange() {
     this.render()
-    this.toolbarUpdate(this.toolbarState())
+    this.syncUi()
     this.persist()
-    // Invite to draw only while the board is empty.
-    this.hintEl.classList.toggle('hidden', this.scene.elements.length > 0)
   }
 
   private handleRemote(msg: ClientMessage) {
@@ -580,26 +689,60 @@ export class CanvasApp {
   private beginText(at: Point) {
     const rect = this.canvas.getBoundingClientRect()
     const screen = sceneToScreen(this.viewport, at)
+    const fontSize = 24
     const ta = document.createElement('textarea')
     ta.className = 'editing'
+    ta.rows = 1
+    ta.spellcheck = false
     ta.style.left = `${rect.left + screen.x}px`
     ta.style.top = `${rect.top + screen.y}px`
-    ta.style.fontSize = '24px'
-    document.body.appendChild(ta)
-    ta.focus()
-    const commit = () => {
+    ta.style.fontSize = `${fontSize * this.viewport.zoom}px`
+    ta.style.color = this.style.strokeColor
+    this.container.appendChild(ta)
+
+    let done = false
+
+    const grow = () => {
+      ta.style.height = 'auto'
+      ta.style.height = `${ta.scrollHeight}px`
+    }
+
+    const finish = (keep: boolean) => {
+      if (done) return
+      done = true
       const text = ta.value.trim()
       ta.remove()
-      if (text) this.commitAdd(makeTextElement(genId(), at, text, 24))
-      this.canvas.focus()
+      this.syncUi()
+      if (keep && text) {
+        const el = makeTextElement(genId(), at, text, fontSize, this.style)
+        this.selectedId = el.id
+        this.tool = 'select'
+        this.commitAdd(el)
+        this.updateCursor()
+        this.syncUi()
+      }
+      this.render()
     }
+
+    ta.addEventListener('input', grow)
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        commit()
+        finish(true)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        finish(false)
       }
     })
-    ta.addEventListener('blur', commit)
+    ta.addEventListener('blur', () => finish(true))
+
+    grow()
+    ta.focus()
+    // The pointer gesture that created the editor must not steal focus back.
+    requestAnimationFrame(() => {
+      if (!done) ta.focus()
+    })
+    this.syncUi()
   }
 
   private fitToScene() {
@@ -627,7 +770,7 @@ export class CanvasApp {
     const y = (this.canvas.clientHeight - h * zoom) / 2 - minY * zoom
     this.viewport = { zoom, x, y }
     this.render()
-    this.toolbarUpdate(this.toolbarState())
+    this.syncUi()
   }
 
   private exportPng() {
@@ -649,7 +792,7 @@ export class CanvasApp {
     off.width = w
     off.height = h
     const octx = off.getContext('2d')!
-    const bg = this.theme === 'dark' ? '#141414' : '#ffffff'
+    const bg = this.theme === 'dark' ? '#121212' : '#ffffff'
     octx.fillStyle = bg
     octx.fillRect(0, 0, w, h)
     octx.setTransform(scale, 0, 0, scale, -b.minX * scale, -b.minY * scale)
@@ -675,7 +818,6 @@ export class CanvasApp {
     const vars = THEME_VARS[this.theme]
     const root = document.documentElement
     for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v)
-    root.style.setProperty('--canvas-bg', this.theme === 'dark' ? '#141414' : '#ffffff')
   }
 
   private persist() {
@@ -701,4 +843,36 @@ export class CanvasApp {
     this.peer.close()
     this.container.remove()
   }
+}
+
+/**
+ * Copy text with the async Clipboard API, falling back to a hidden textarea.
+ * Embedded browsers often deny clipboard permissions; the fallback keeps Share
+ * usable there without prompting.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    /* fall through to execCommand */
+  }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.top = '-1000px'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } catch {
+    copied = false
+  }
+  ta.remove()
+  return copied
 }

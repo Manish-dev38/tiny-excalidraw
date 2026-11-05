@@ -48,8 +48,8 @@ export function startPeerSession(roomId: string, cb: PeerCallbacks): PeerSession
         /* ignore malformed frames */
       }
     })
-    c.on('close', () => setStatus(role, 'connecting'))
-    c.on('error', () => setStatus(role, 'connecting'))
+    c.on('close', () => setStatus(role, role === 'host' ? 'connected' : 'error'))
+    c.on('error', () => setStatus(role, role === 'host' ? 'connected' : 'error'))
   }
 
   const joinAsClient = () => {
@@ -71,6 +71,12 @@ export function startPeerSession(roomId: string, cb: PeerCallbacks): PeerSession
   const p = new Peer(peerIdForRoom(roomId))
   peer = p
   p.on('connection', handleConn)
+  p.on('open', () => {
+    // A host is reachable as soon as its peer id is registered, even with no
+    // guest yet; showing "connecting" forever would make the room look broken.
+    if (closed || peer !== p) return
+    if (role === 'host') setStatus('host', 'connected')
+  })
   p.on('error', (err) => {
     if (err.type === 'unavailable-id') {
       try {

@@ -69,6 +69,7 @@ export function makeTextElement(
   at: Point,
   text: string,
   fontSize = 24,
+  style: DrawStyle = DEFAULT_STYLE,
 ): TextElement {
   return {
     id,
@@ -77,8 +78,8 @@ export function makeTextElement(
     y: at.y,
     text,
     fontSize,
-    strokeColor: DEFAULT_STYLE.strokeColor,
+    strokeColor: style.strokeColor,
     background: 'transparent',
-    strokeWidth: 1,
+    strokeWidth: style.strokeWidth,
   }
 }

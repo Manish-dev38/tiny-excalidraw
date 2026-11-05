@@ -60,4 +60,15 @@ describe('makeTextElement', () => {
       fontSize: 28,
     })
   })
+
+  it('inherits the chosen stroke colour so text stays visible on dark boards', () => {
+    const el = makeTextElement('t', { x: 0, y: 0 }, 'hello', 24, {
+      strokeColor: '#ffffff',
+      background: 'transparent',
+      strokeWidth: 2,
+    })
+    expect(el.strokeColor).toBe('#ffffff')
+    expect(el.strokeWidth).toBe(2)
+    expect(el.background).toBe('transparent')
+  })
 })

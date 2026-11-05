@@ -1,5 +1,6 @@
 import type { Point } from '../core/types'
 import type { ExcalidrawElement } from '../core/types'
+import { LINE_HEIGHT } from '../core/geometry'
 import type { Viewport } from './viewport'
 
 export const HANDWRITING_FONT = "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive"
@@ -66,7 +67,10 @@ export function drawElement(ctx: CanvasRenderingContext2D, el: ExcalidrawElement
       ctx.font = `${el.fontSize}px ${HANDWRITING_FONT}`
       ctx.fillStyle = el.strokeColor
       ctx.textBaseline = 'top'
-      ctx.fillText(el.text, el.x, el.y)
+      const lines = el.text.split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], el.x, el.y + i * el.fontSize * LINE_HEIGHT)
+      }
       break
     }
   }

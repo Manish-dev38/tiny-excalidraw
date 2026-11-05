@@ -15,7 +15,8 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
 
   const logo = document.createElement('div')
   logo.className = 'home-logo'
-  logo.textContent = '✏️'
+  logo.innerHTML =
+    '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l4.4-1L19 8.4l-3.4-3.4L5 15.6z"/><path d="M13.8 6.8l3.4 3.4"/></svg>'
   card.appendChild(logo)
 
   const title = document.createElement('h1')

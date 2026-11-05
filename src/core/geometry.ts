@@ -53,6 +53,9 @@ export interface BBox {
   maxY: number
 }
 
+/** Line height multiplier shared by canvas rendering, bounds and SVG export. */
+export const LINE_HEIGHT = 1.2
+
 export function bboxOf(el: ExcalidrawElement): BBox {
   const pad = el.strokeWidth / 2
   let minX: number
@@ -91,12 +94,15 @@ export function bboxOf(el: ExcalidrawElement): BBox {
       maxX = Math.max(el.points[0].x, el.points[1].x)
       maxY = Math.max(el.points[0].y, el.points[1].y)
       break
-    case 'text':
+    case 'text': {
+      const lines = el.text.split('\n')
+      const longest = lines.reduce((n, line) => Math.max(n, line.length), 0)
       minX = el.x
       minY = el.y
-      maxX = el.x + el.text.length * el.fontSize * 0.55
-      maxY = el.y + el.fontSize * 1.2
+      maxX = el.x + longest * el.fontSize * 0.55
+      maxY = el.y + lines.length * el.fontSize * LINE_HEIGHT
       break
+    }
   }
 
   return { minX: minX - pad, minY: minY - pad, maxX: maxX + pad, maxY: maxY + pad }
