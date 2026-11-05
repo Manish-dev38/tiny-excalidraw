@@ -5,8 +5,15 @@ import type { History, Op } from '../core/history'
 import { buildRoomUrl } from '../core/room'
 import { toSVG } from '../core/export'
 import { serializeScene } from '../core/serialize'
-import { defaultFileName, serializeBoardFile } from '../core/boardFile'
+import {
+  defaultFileName,
+  fileNameFromSource,
+  MAX_FILE_BYTES,
+  parseBoardFile,
+  serializeBoardFile,
+} from '../core/boardFile'
 import { downloadTextFile } from './download'
+import { confirmReplaceBoard, showImportError } from './dialogs'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
@@ -64,6 +71,7 @@ export interface CanvasMount {
   roomId: string
   store: BoardStore
   initialScene?: Scene
+  fileName?: string
   onHome?(): void
 }
 
@@ -94,12 +102,15 @@ export class CanvasApp {
   private savedFlag = false
   private persistTimer: number | undefined
   private finishText: ((keep: boolean) => void) | null = null
+  private fileName: string
+  private fileInput: HTMLInputElement
 
   constructor(private mount: CanvasMount) {
     this.container = document.createElement('div')
     this.container.className = 'app'
     this.scene = mount.initialScene ?? createScene()
     this.history = createHistory()
+    this.fileName = mount.fileName ?? defaultFileName(mount.roomId)
 
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'canvas'
@@ -132,6 +143,17 @@ export class CanvasApp {
       this.chrome.hint,
       panel.el,
     )
+
+    this.fileInput = document.createElement('input')
+    this.fileInput.type = 'file'
+    this.fileInput.accept = '.whiteboard,.json,application/json'
+    this.fileInput.hidden = true
+    this.fileInput.addEventListener('change', () => {
+      const file = this.fileInput.files?.[0]
+      this.fileInput.value = ''
+      if (file) void this.importBoardFile(file)
+    })
+    this.container.appendChild(this.fileInput)
 
     this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'dark'
     this.applyTheme()
@@ -171,6 +193,10 @@ export class CanvasApp {
         this.syncUi()
       },
       onSave: () => this.saveBoardFile(),
+      onImport: () => {
+        this.commitOpenEditor()
+        this.fileInput.click()
+      },
       onShare: () => {
         const url = buildRoomUrl(this.mount.roomId)
         void copyText(url).then((ok) =>
@@ -471,10 +497,36 @@ export class CanvasApp {
 
   private saveBoardFile(): void {
     this.commitOpenEditor()
-    downloadTextFile(
+    downloadTextFile(this.fileName, serializeBoardFile(this.scene, this.mount.roomId))
+  }
+
+  private async importBoardFile(file: File): Promise<void> {
+    if (file.size > MAX_FILE_BYTES) {
+      await showImportError('This file is too large (max 5 MB).')
+      return
+    }
+    let parsed: ReturnType<typeof parseBoardFile>
+    try {
+      parsed = parseBoardFile(await file.text())
+    } catch (error) {
+      await showImportError(
+        error instanceof Error ? error.message : "This isn't a Tiny Excalidraw board file.",
+      )
+      return
+    }
+    if (this.scene.elements.length > 0 && !(await confirmReplaceBoard())) return
+
+    this.scene = parsed.scene
+    this.history = createHistory()
+    this.selectedId = null
+    this.fileName = fileNameFromSource(
+      file.name,
       defaultFileName(this.mount.roomId),
-      serializeBoardFile(this.scene, this.mount.roomId),
     )
+    this.fitToScene()
+    this.render()
+    this.syncUi()
+    this.persist()
   }
 
   private toScene(e: { clientX: number; clientY: number }): Point {

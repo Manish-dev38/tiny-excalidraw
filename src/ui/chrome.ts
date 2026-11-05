@@ -16,6 +16,7 @@ export interface ChromeState {
 export interface ChromeCallbacks {
   onTogglePanel(): void
   onSave(): void
+  onImport(): void
   onShare(): void
   onExportPng(): void
   onExportSvg(): void
@@ -150,6 +151,10 @@ export function buildChrome(initial: ChromeState, cb: ChromeCallbacks): Chrome {
     cb.onToggleTheme()
   })
   menu.append(
+    menuItem('Import board', () => {
+      closeMenu()
+      cb.onImport()
+    }),
     menuItem('Export PNG', () => {
       closeMenu()
       cb.onExportPng()

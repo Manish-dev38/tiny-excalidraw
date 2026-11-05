@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   BOARD_FORMAT,
   BOARD_VERSION,
+  BoardFileError,
+  MAX_ELEMENTS,
+  MAX_FILE_BYTES,
+  MAX_POINTS,
   buildBoardFile,
   defaultFileName,
   fileNameFromSource,
   normalizeFileName,
+  parseBoardFile,
   serializeBoardFile,
 } from './boardFile'
 import { createScene } from './scene'
@@ -100,5 +105,117 @@ describe('fileNameFromSource', () => {
       'lesson.whiteboard',
     )
     expect(fileNameFromSource('lesson.json', 'fallback.whiteboard')).toBe('lesson.json')
+  })
+})
+
+describe('parseBoardFile', () => {
+  const envelope = (elements: unknown[]) =>
+    JSON.stringify({
+      format: BOARD_FORMAT,
+      version: BOARD_VERSION,
+      savedAt: '2026-11-05T00:00:00.000Z',
+      roomId: 'abc123',
+      scene: { elements },
+    })
+
+  it('parses a versioned board and keeps its metadata', () => {
+    const parsed = parseBoardFile(envelope([rect, text]))
+    expect(parsed).toEqual({
+      scene: { elements: [rect, text] },
+      roomId: 'abc123',
+      savedAt: '2026-11-05T00:00:00.000Z',
+      legacy: false,
+    })
+  })
+
+  it('parses a legacy raw scene', () => {
+    const parsed = parseBoardFile(JSON.stringify({ elements: [rect] }))
+    expect(parsed.legacy).toBe(true)
+    expect(parsed.scene.elements).toEqual([rect])
+  })
+
+  it('accepts an empty scene', () => {
+    expect(parseBoardFile(envelope([])).scene).toEqual({ elements: [] })
+  })
+
+  it('rejects invalid JSON and non-board JSON', () => {
+    expect(() => parseBoardFile('not json')).toThrow(BoardFileError)
+    expect(() => parseBoardFile('[]')).toThrow(BoardFileError)
+    expect(() => parseBoardFile('null')).toThrow(BoardFileError)
+  })
+
+  it('rejects a foreign format and unsupported versions', () => {
+    expect(() =>
+      parseBoardFile(JSON.stringify({ format: 'excalidraw', version: 1, scene: { elements: [] } })),
+    ).toThrow("This isn't a Tiny Excalidraw board file.")
+    expect(() =>
+      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 2, scene: { elements: [] } })),
+    ).toThrow('newer version')
+    expect(() =>
+      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 0, scene: { elements: [] } })),
+    ).toThrow('unsupported version')
+  })
+
+  it('rejects missing or malformed scenes', () => {
+    expect(() =>
+      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 1 })),
+    ).toThrow(BoardFileError)
+    expect(() => parseBoardFile(JSON.stringify({ elements: 'nope' }))).toThrow(BoardFileError)
+  })
+
+  it('rejects unknown and image element types with specific reasons', () => {
+    expect(() => parseBoardFile(envelope([{ ...rect, type: 'image' }]))).toThrow(
+      "contains images",
+    )
+    expect(() => parseBoardFile(envelope([{ ...rect, type: 'frame' }]))).toThrow(
+      "doesn't support",
+    )
+  })
+
+  it('rejects invalid base properties and non-finite numbers', () => {
+    expect(() => parseBoardFile(envelope([{ ...rect, x: Infinity }]))).toThrow(BoardFileError)
+    expect(() => parseBoardFile(envelope([{ ...rect, id: '' }]))).toThrow(BoardFileError)
+    expect(() => parseBoardFile(envelope([{ ...rect, background: 1 }]))).toThrow(BoardFileError)
+  })
+
+  it('rejects malformed pen, shape, arrow, and text geometry', () => {
+    expect(() =>
+      parseBoardFile(envelope([{ ...rect, type: 'pen', points: [{ x: 0, y: NaN }] }])),
+    ).toThrow('stroke with invalid points')
+    expect(() =>
+      parseBoardFile(envelope([{ ...rect, width: 'wide' }])),
+    ).toThrow('shape with invalid size')
+    expect(() =>
+      parseBoardFile(envelope([{ ...rect, type: 'arrow', points: [{ x: 0, y: 0 }] }])),
+    ).toThrow('arrow with invalid points')
+    expect(() =>
+      parseBoardFile(envelope([{ ...text, fontSize: 0 }])),
+    ).toThrow('text with invalid properties')
+  })
+
+  it('rejects duplicate ids', () => {
+    expect(() => parseBoardFile(envelope([rect, { ...text, id: rect.id }]))).toThrow(
+      'same id',
+    )
+  })
+
+  it('rejects too many elements, points, and bytes', () => {
+    const tooManyElements = Array.from({ length: MAX_ELEMENTS + 1 }, (_, i) => ({
+      ...rect,
+      id: `rect-${i}`,
+    }))
+    expect(() => parseBoardFile(envelope(tooManyElements))).toThrow('too many elements')
+    expect(() =>
+      parseBoardFile(
+        envelope([
+          {
+            ...rect,
+            type: 'pen',
+            points: Array.from({ length: MAX_POINTS + 1 }, () => ({ x: 0, y: 0 })),
+          },
+        ]),
+      ),
+    ).toThrow('too many points')
+    expect(() => parseBoardFile('x'.repeat(MAX_FILE_BYTES + 1))).toThrow('too large')
   })
 })
