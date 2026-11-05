@@ -180,9 +180,10 @@ function validateElement(value: unknown): ExcalidrawElement {
   return value as unknown as ExcalidrawElement
 }
 
-function validateScene(elements: unknown[]): Scene {
+/** Validates a whole element list; any invalid element rejects the scene. */
+export function parseSceneElements(value: unknown): Scene {
   const seen = new Set<string>()
-  const validated = elements.map((element) => {
+  const validated = readElements(value).map((element) => {
     const result = validateElement(element)
     if (seen.has(result.id)) {
       throw new BoardFileError('This board contains two elements with the same id.')
@@ -229,12 +230,12 @@ export function parseBoardFile(raw: string): ParsedBoardFile {
         : undefined
     const savedAt = typeof parsed.savedAt === 'string' ? parsed.savedAt : undefined
     return {
-      scene: validateScene(readElements(parsed.scene.elements)),
+      scene: parseSceneElements(parsed.scene.elements),
       roomId,
       savedAt,
       legacy: false,
     }
   }
 
-  return { scene: validateScene(readElements(parsed.elements)), legacy: true }
+  return { scene: parseSceneElements(parsed.elements), legacy: true }
 }

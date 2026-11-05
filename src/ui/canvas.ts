@@ -523,6 +523,7 @@ export class CanvasApp {
       file.name,
       defaultFileName(this.mount.roomId),
     )
+    this.peer.send({ type: 'replace', scene: this.scene })
     this.fitToScene()
     this.render()
     this.syncUi()
@@ -735,6 +736,12 @@ export class CanvasApp {
         break
       case 'remove':
         this.scene = removeElement(this.scene, msg.id)
+        break
+      case 'replace':
+        this.finishText?.(false)
+        this.scene = msg.scene
+        this.history = createHistory()
+        this.selectedId = null
         break
       case 'cursor': {
         const color = assignColor(String(msg.name ?? 'remote'))
