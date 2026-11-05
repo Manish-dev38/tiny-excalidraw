@@ -681,6 +681,26 @@ button {
   font-size: 13px;
 }
 
+/* --- Storage warning --- */
+.storage-warning {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 11px 14px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  background: var(--chrome-bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.4);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
 /* --- Dialogs --- */
 .app-dialog {
   width: min(420px, calc(100vw - 32px));

@@ -1,12 +1,12 @@
-import type { BoardStore, RecentBoard } from './storage'
-import { deleteBoard, loadBoards } from './storage'
+import type { RecentBoard } from './storage'
 
 export interface HomeCallbacks {
   onNewRoom(): void
   onOpenRoom(roomId: string): void
+  onDelete(roomId: string): void
 }
 
-export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
+export function renderHome(boards: RecentBoard[], cb: HomeCallbacks): HTMLElement {
   const root = document.createElement('div')
   root.className = 'home'
 
@@ -40,7 +40,6 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
   hint.textContent = 'Send the link to your friend and start drawing.'
   card.appendChild(hint)
 
-  const boards = loadBoards(store)
   if (boards.length > 0) {
     const recent = document.createElement('div')
     recent.className = 'recent'
@@ -52,7 +51,7 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
     const list = document.createElement('ul')
     list.className = 'recent-list'
     for (const b of boards) {
-      list.appendChild(renderBoardRow(b, store, cb.onOpenRoom))
+      list.appendChild(renderBoardRow(b, cb.onOpenRoom, cb.onDelete))
     }
     recent.appendChild(list)
     card.appendChild(recent)
@@ -64,8 +63,8 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
 
 function renderBoardRow(
   board: RecentBoard,
-  store: BoardStore,
   onOpen: (id: string) => void,
+  onDelete: (id: string) => void,
 ): HTMLLIElement {
   const li = document.createElement('li')
   li.className = 'recent-row'
@@ -83,10 +82,7 @@ function renderBoardRow(
   del.className = 'recent-delete'
   del.textContent = '✕'
   del.setAttribute('aria-label', 'Delete board')
-  del.addEventListener('click', () => {
-    deleteBoard(store, board.roomId)
-    li.remove()
-  })
+  del.addEventListener('click', () => onDelete(board.roomId))
 
   li.append(open, when, del)
   return li

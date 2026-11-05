@@ -37,8 +37,7 @@ import {
 } from './uiState'
 import { THEME_VARS } from './palette'
 import type { Theme } from './palette'
-import { saveBoard } from './storage'
-import type { BoardStore } from './storage'
+import type { BoardRepository } from './storage'
 import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
 import { hitTestTop, translateElement } from './select'
@@ -69,7 +68,7 @@ type Gesture =
 
 export interface CanvasMount {
   roomId: string
-  store: BoardStore
+  repo: BoardRepository
   initialScene?: Scene
   fileName?: string
   onHome?(): void
@@ -909,12 +908,16 @@ export class CanvasApp {
     window.clearTimeout(this.persistTimer)
     this.persistTimer = window.setTimeout(() => {
       this.savedFlag = false
-      const scene = this.scene
-      saveBoard(this.mount.store, {
-        roomId: this.mount.roomId,
-        data: serializeScene(scene),
-        updatedAt: Date.now(),
-      })
+      void this.mount.repo
+        .save({
+          roomId: this.mount.roomId,
+          data: serializeScene(this.scene),
+          updatedAt: Date.now(),
+          fileName: this.fileName,
+        })
+        .catch(() => {
+          /* Status handling is added by the autosave ticket. */
+        })
     }, 300)
   }
 
