@@ -23,7 +23,15 @@ to run.
 - **Text**: click to place, Enter commits, Shift+Enter adds a line, Escape cancels,
   click-away commits; text inherits the stroke colour and exports as multiple lines
 - Real-time collaboration with live cursor presence, including name labels
-- Boards persist in local storage (per room), with a recent-boards list
+- **Save** (`Ctrl/Cmd+S`) downloads the whole board as an editable `.whiteboard` JSON
+  file; **Save As** (`Ctrl/Cmd+Shift+S`) lets you choose and remember its filename
+- **Import** restores a `.whiteboard` or `.json` file into the current room (keeping its
+  share link) or into a new room from the home screen; invalid files are rejected
+  without touching the current drawing
+- **Autosave** stores the scene in IndexedDB after a short debounce and shows
+  `Saving…` / `Saved` / `Not saved`; reopening a bare URL resumes the last board
+- Boards persist in IndexedDB (with a localStorage fallback and one-time migration),
+  with a recent-boards list capped at 10
 - Export to **PNG** and **SVG**
 - Dark theme by default (Excalidraw-inspired), toggleable to light; in-house iconography
 - "Back to home" lives in the `…` menu and returns to the recent-boards screen
@@ -33,7 +41,7 @@ to run.
 ```bash
 npm install
 npm run dev        # dev server
-npm test           # vitest suite (96 tests)
+npm test           # vitest suite (128 tests)
 npm run build      # type-check + production build to dist/
 ```
 
@@ -46,6 +54,21 @@ npm run build      # type-check + production build to dist/
    shows "Friend offline".
 3. Draw together — strokes, shapes, and text appear live on both screens.
 4. Bring your own voice/video call; the board is canvas-only.
+
+## Saving and restoring boards
+
+- Click **Save** (or press `Ctrl/Cmd+S`) to download the board as
+  `whiteboard-<roomId>-<date>.whiteboard`. The file is plain JSON containing the whole
+  editable scene.
+- Use **Save As…** in the `…` menu (or `Ctrl/Cmd+Shift+S`) to pick a filename. The name
+  is remembered per board and reused by later saves.
+- **Import board** in the `…` menu replaces the current drawing after confirmation and
+  keeps the room link intact, so collaborators stay connected. On the home screen,
+  **Import a board** opens the file in a new room.
+- Invalid, oversized, or unsupported files (including images) are rejected with a clear
+  message and leave the current drawing untouched.
+- Your work is autosaved to IndexedDB as you draw. Closing the tab and reopening the app
+  returns you to the last board; **Back to home** clears that pointer.
 
 ## Deploy to Netlify
 
@@ -61,11 +84,12 @@ The app is a static site; collaboration uses PeerJS's free cloud signaling.
 ```
 src/
   core/       pure logic: types, scene, geometry, history (op-based undo),
-              room ids, serialization, SVG export
+              room ids, serialization, SVG export, board-file codec/validation
   collab/     peer protocol (validated message envelope) + PeerJS session
   ui/         canvas app, renderer, toolbar, chrome, properties,
               ui-state rules, home screen, viewport, element factories,
-              eraser, storage
+              eraser, downloads, dialogs, autosave controller, storage
+              repository (IndexedDB + localStorage fallback)
 ```
 
 The core domain logic is developed test-first (TDD) — see `src/**/*.test.ts`.
