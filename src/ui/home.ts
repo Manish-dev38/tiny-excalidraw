@@ -2,6 +2,7 @@ import type { RecentBoard } from './storage'
 
 export interface HomeCallbacks {
   onNewRoom(): void
+  onImport(): void
   onOpenRoom(roomId: string): void
   onDelete(roomId: string): void
 }
@@ -29,11 +30,21 @@ export function renderHome(boards: RecentBoard[], cb: HomeCallbacks): HTMLElemen
   subtitle.textContent = 'Two of you, one board — draw it out together, live.'
   card.appendChild(subtitle)
 
+  const actions = document.createElement('div')
+  actions.className = 'home-actions'
+
   const newBtn = document.createElement('button')
   newBtn.className = 'primary-btn'
   newBtn.textContent = 'Create a board'
   newBtn.addEventListener('click', () => cb.onNewRoom())
-  card.appendChild(newBtn)
+
+  const importBtn = document.createElement('button')
+  importBtn.className = 'secondary-btn'
+  importBtn.textContent = 'Import a board'
+  importBtn.addEventListener('click', () => cb.onImport())
+
+  actions.append(newBtn, importBtn)
+  card.appendChild(actions)
 
   const hint = document.createElement('p')
   hint.className = 'home-hint'

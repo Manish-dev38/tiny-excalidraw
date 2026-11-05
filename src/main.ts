@@ -1,14 +1,58 @@
 import './style.css'
 import { generateRoomId, parseRoomFromHash } from './core/room'
-import { deserializeScene } from './core/serialize'
+import { deserializeScene, serializeScene } from './core/serialize'
+import {
+  defaultFileName,
+  fileNameFromSource,
+  MAX_FILE_BYTES,
+  parseBoardFile,
+} from './core/boardFile'
 import { openBoardRepository, type BoardRepository } from './ui/storage'
 import { renderHome } from './ui/home'
 import { CanvasApp } from './ui/canvas'
+import { showImportError } from './ui/dialogs'
 import type { Scene } from './core/scene'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 const legacyStore = localStorage
 let repo: BoardRepository
+
+const homeImportInput = document.createElement('input')
+homeImportInput.type = 'file'
+homeImportInput.accept = '.whiteboard,.json,application/json'
+homeImportInput.hidden = true
+homeImportInput.addEventListener('change', () => {
+  const file = homeImportInput.files?.[0]
+  homeImportInput.value = ''
+  if (file) void importBoardFromHome(file)
+})
+document.body.appendChild(homeImportInput)
+
+async function importBoardFromHome(file: File) {
+  if (file.size > MAX_FILE_BYTES) {
+    await showImportError('This file is too large (max 5 MB).')
+    return
+  }
+  let parsed: ReturnType<typeof parseBoardFile>
+  try {
+    parsed = parseBoardFile(await file.text())
+  } catch (error) {
+    await showImportError(
+      error instanceof Error ? error.message : "This isn't a Tiny Excalidraw board file.",
+    )
+    return
+  }
+
+  const roomId = generateRoomId()
+  const fileName = fileNameFromSource(file.name, defaultFileName(roomId))
+  await repo.save({
+    roomId,
+    data: serializeScene(parsed.scene),
+    updatedAt: Date.now(),
+    fileName,
+  })
+  await navigateToRoom(roomId)
+}
 
 async function navigateToRoom(roomId: string) {
   history.replaceState(null, '', `#room=${encodeURIComponent(roomId)}`)
@@ -42,6 +86,7 @@ async function renderHomeScreen() {
       onNewRoom: () => {
         void navigateToRoom(generateRoomId())
       },
+      onImport: () => homeImportInput.click(),
       onOpenRoom: (id) => {
         void navigateToRoom(id)
       },

@@ -646,6 +646,33 @@ button {
   filter: brightness(1.06);
 }
 
+.home-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.secondary-btn {
+  padding: 11px 20px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: var(--button-hover);
+}
+
+.secondary-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .recent {
   margin-top: 36px;
   text-align: left;
@@ -944,6 +971,10 @@ textarea.editing:focus-visible {
 
   .save-status-label {
     display: none;
+  }
+
+  .home-actions {
+    flex-direction: column;
   }
 
   .panel {
