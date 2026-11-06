@@ -18,6 +18,7 @@ const messages: ClientMessage[] = [
   { type: 'add', element: rect },
   { type: 'update', id: 'a', patch: { x: 5 } },
   { type: 'remove', id: 'a' },
+  { type: 'replace', scene: { elements: [rect] } },
   { type: 'cursor', x: 12, y: 34, tool: 'pen' },
   { type: 'cursor', x: 0, y: 0, tool: null },
 ]
@@ -41,5 +42,14 @@ describe('encodeMessage / decodeMessage', () => {
   it('rejects messages missing required fields', () => {
     expect(() => decodeMessage(JSON.stringify({ type: 'add' }))).toThrow()
     expect(() => decodeMessage(JSON.stringify({ type: 'cursor', x: 1 }))).toThrow()
+  })
+  it('rejects malformed replace payloads', () => {
+    expect(() => decodeMessage(JSON.stringify({ type: 'replace' }))).toThrow()
+    expect(() =>
+      decodeMessage(JSON.stringify({ type: 'replace', scene: null })),
+    ).toThrow()
+    expect(() =>
+      decodeMessage(JSON.stringify({ type: 'replace', scene: { elements: [{ id: 'x' }] } })),
+    ).toThrow()
   })
 })

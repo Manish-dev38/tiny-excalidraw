@@ -230,6 +230,42 @@ button {
   background: #f03e3e;
 }
 
+.save-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.save-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #868e96;
+}
+
+.save-status.saving .save-status-dot {
+  background: #f08c00;
+}
+
+.save-status.saved .save-status-dot {
+  background: #37b24d;
+}
+
+.save-status.error {
+  color: var(--danger);
+}
+
+.save-status.error .save-status-dot {
+  background: #f03e3e;
+}
+
 .menu-wrap {
   position: relative;
 }
@@ -610,6 +646,33 @@ button {
   filter: brightness(1.06);
 }
 
+.home-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.secondary-btn {
+  padding: 11px 20px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: var(--button-hover);
+}
+
+.secondary-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .recent {
   margin-top: 36px;
   text-align: left;
@@ -679,6 +742,124 @@ button {
   margin: 14px 0 0;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+/* --- Storage warning --- */
+.storage-warning {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 11px 14px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  background: var(--chrome-bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.4);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+/* --- Dialogs --- */
+.app-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 14px;
+  background: var(--chrome-bg);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.5);
+}
+
+.app-dialog::backdrop {
+  background: rgb(0 0 0 / 0.55);
+}
+
+.dialog-title {
+  margin: 0 0 8px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.dialog-body {
+  margin: 0 0 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dialog-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.dialog-input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  background: var(--canvas-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dialog-input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.dialog-hint {
+  margin: 0 0 20px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-btn {
+  padding: 9px 14px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dialog-btn:hover {
+  background: var(--button-hover);
+}
+
+.dialog-btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.dialog-btn.primary.danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.dialog-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* --- Inline text editor --- */
@@ -782,6 +963,18 @@ textarea.editing:focus-visible {
 
   .share-btn .share-label {
     display: none;
+  }
+
+  .save-status {
+    padding: 0 2px;
+  }
+
+  .save-status-label {
+    display: none;
+  }
+
+  .home-actions {
+    flex-direction: column;
   }
 
   .panel {

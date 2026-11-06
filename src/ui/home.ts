@@ -1,12 +1,13 @@
-import type { BoardStore, RecentBoard } from './storage'
-import { deleteBoard, loadBoards } from './storage'
+import type { RecentBoard } from './storage'
 
 export interface HomeCallbacks {
   onNewRoom(): void
+  onImport(): void
   onOpenRoom(roomId: string): void
+  onDelete(roomId: string): void
 }
 
-export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
+export function renderHome(boards: RecentBoard[], cb: HomeCallbacks): HTMLElement {
   const root = document.createElement('div')
   root.className = 'home'
 
@@ -29,18 +30,27 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
   subtitle.textContent = 'Two of you, one board — draw it out together, live.'
   card.appendChild(subtitle)
 
+  const actions = document.createElement('div')
+  actions.className = 'home-actions'
+
   const newBtn = document.createElement('button')
   newBtn.className = 'primary-btn'
   newBtn.textContent = 'Create a board'
   newBtn.addEventListener('click', () => cb.onNewRoom())
-  card.appendChild(newBtn)
+
+  const importBtn = document.createElement('button')
+  importBtn.className = 'secondary-btn'
+  importBtn.textContent = 'Import a board'
+  importBtn.addEventListener('click', () => cb.onImport())
+
+  actions.append(newBtn, importBtn)
+  card.appendChild(actions)
 
   const hint = document.createElement('p')
   hint.className = 'home-hint'
   hint.textContent = 'Send the link to your friend and start drawing.'
   card.appendChild(hint)
 
-  const boards = loadBoards(store)
   if (boards.length > 0) {
     const recent = document.createElement('div')
     recent.className = 'recent'
@@ -52,7 +62,7 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
     const list = document.createElement('ul')
     list.className = 'recent-list'
     for (const b of boards) {
-      list.appendChild(renderBoardRow(b, store, cb.onOpenRoom))
+      list.appendChild(renderBoardRow(b, cb.onOpenRoom, cb.onDelete))
     }
     recent.appendChild(list)
     card.appendChild(recent)
@@ -64,8 +74,8 @@ export function renderHome(store: BoardStore, cb: HomeCallbacks): HTMLElement {
 
 function renderBoardRow(
   board: RecentBoard,
-  store: BoardStore,
   onOpen: (id: string) => void,
+  onDelete: (id: string) => void,
 ): HTMLLIElement {
   const li = document.createElement('li')
   li.className = 'recent-row'
@@ -83,10 +93,7 @@ function renderBoardRow(
   del.className = 'recent-delete'
   del.textContent = '✕'
   del.setAttribute('aria-label', 'Delete board')
-  del.addEventListener('click', () => {
-    deleteBoard(store, board.roomId)
-    li.remove()
-  })
+  del.addEventListener('click', () => onDelete(board.roomId))
 
   li.append(open, when, del)
   return li

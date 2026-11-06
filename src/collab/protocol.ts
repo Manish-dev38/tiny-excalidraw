@@ -1,3 +1,5 @@
+import type { Scene } from '../core/scene'
+import { parseSceneElements } from '../core/boardFile'
 import type { ExcalidrawElement } from '../core/types'
 
 export type Tool = 'pen' | 'rectangle' | 'ellipse' | 'arrow' | 'text'
@@ -6,9 +8,10 @@ export type ClientMessage =
   | { type: 'add'; element: ExcalidrawElement }
   | { type: 'update'; id: string; patch: Partial<ExcalidrawElement> }
   | { type: 'remove'; id: string }
+  | { type: 'replace'; scene: Scene }
   | { type: 'cursor'; x: number; y: number; tool: Tool | null; name?: string }
 
-const MESSAGE_TYPES = ['add', 'update', 'remove', 'cursor']
+const MESSAGE_TYPES = ['add', 'update', 'remove', 'replace', 'cursor']
 const TOOLS = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
 
 export function encodeMessage(msg: ClientMessage): string {
@@ -51,6 +54,10 @@ export function decodeMessage(raw: string): ClientMessage {
     case 'remove':
       if (typeof parsed.id !== 'string') throw new Error('Missing id')
       return { type: 'remove', id: parsed.id }
+    case 'replace': {
+      assertObject(parsed.scene)
+      return { type: 'replace', scene: parseSceneElements(parsed.scene.elements) }
+    }
     case 'cursor': {
       if (typeof parsed.x !== 'number' || typeof parsed.y !== 'number') {
         throw new Error('Invalid cursor coordinates')

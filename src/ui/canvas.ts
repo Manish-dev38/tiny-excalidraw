@@ -5,6 +5,17 @@ import type { History, Op } from '../core/history'
 import { buildRoomUrl } from '../core/room'
 import { toSVG } from '../core/export'
 import { serializeScene } from '../core/serialize'
+import {
+  defaultFileName,
+  fileNameFromSource,
+  MAX_FILE_BYTES,
+  normalizeFileName,
+  parseBoardFile,
+  serializeBoardFile,
+} from '../core/boardFile'
+import { downloadTextFile } from './download'
+import { confirmReplaceBoard, showImportError, showSaveAsDialog } from './dialogs'
+import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
@@ -28,8 +39,7 @@ import {
 } from './uiState'
 import { THEME_VARS } from './palette'
 import type { Theme } from './palette'
-import { saveBoard } from './storage'
-import type { BoardStore } from './storage'
+import type { BoardRepository } from './storage'
 import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
 import { hitTestTop, translateElement } from './select'
@@ -60,8 +70,9 @@ type Gesture =
 
 export interface CanvasMount {
   roomId: string
-  store: BoardStore
+  repo: BoardRepository
   initialScene?: Scene
+  fileName?: string
   onHome?(): void
 }
 
@@ -89,14 +100,18 @@ export class CanvasApp {
   private toolbarUpdate: (tool: UiTool) => void
   private panelUpdate: (state: PropertiesState) => void
   private chromeUpdate: (state: ChromeState) => void
-  private savedFlag = false
-  private persistTimer: number | undefined
+  private autosave: Autosave
+  private saveState: AutosaveState = { status: 'saved' }
+  private finishText: ((keep: boolean) => void) | null = null
+  private fileName: string
+  private fileInput: HTMLInputElement
 
   constructor(private mount: CanvasMount) {
     this.container = document.createElement('div')
     this.container.className = 'app'
     this.scene = mount.initialScene ?? createScene()
     this.history = createHistory()
+    this.fileName = mount.fileName ?? defaultFileName(mount.roomId)
 
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'canvas'
@@ -120,6 +135,20 @@ export class CanvasApp {
     this.chrome = buildChrome(this.chromeState(), this.chromeCallbacks())
     this.chromeUpdate = this.chrome.update
 
+    this.autosave = createAutosave({
+      save: () =>
+        this.mount.repo.save({
+          roomId: this.mount.roomId,
+          data: serializeScene(this.scene),
+          updatedAt: Date.now(),
+          fileName: this.fileName,
+        }),
+      onStatus: (state) => {
+        this.saveState = state
+        this.syncUi()
+      },
+    })
+
     this.container.append(
       toolbar.el,
       this.chrome.topLeft,
@@ -129,6 +158,17 @@ export class CanvasApp {
       this.chrome.hint,
       panel.el,
     )
+
+    this.fileInput = document.createElement('input')
+    this.fileInput.type = 'file'
+    this.fileInput.accept = '.whiteboard,.json,application/json'
+    this.fileInput.hidden = true
+    this.fileInput.addEventListener('change', () => {
+      const file = this.fileInput.files?.[0]
+      this.fileInput.value = ''
+      if (file) void this.importBoardFile(file)
+    })
+    this.container.appendChild(this.fileInput)
 
     this.theme = (localStorage.getItem('tiny-theme') as Theme) || 'dark'
     this.applyTheme()
@@ -153,7 +193,7 @@ export class CanvasApp {
       },
     })
 
-    if (!mount.initialScene) this.persist()
+    if (!mount.initialScene) this.autosave.change()
   }
 
   get el(): HTMLElement {
@@ -166,6 +206,14 @@ export class CanvasApp {
         const visible = isPanelVisible(this.tool, this.selectedElement(), this.panelMode)
         this.panelMode = visible ? 'closed' : 'open'
         this.syncUi()
+      },
+      onSave: () => this.saveBoardFile(),
+      onSaveAs: () => {
+        void this.saveBoardAsFile()
+      },
+      onImport: () => {
+        this.commitOpenEditor()
+        this.fileInput.click()
       },
       onShare: () => {
         const url = buildRoomUrl(this.mount.roomId)
@@ -193,9 +241,7 @@ export class CanvasApp {
         this.syncUi()
       },
       onHome: () => {
-        this.destroy()
-        if (this.mount.onHome) this.mount.onHome()
-        else history.replaceState(null, '', location.pathname)
+        void this.leaveToHome()
       },
       onZoom: (factor: number) => {
         this.viewport = zoomAt(this.viewport, this.center(), factor)
@@ -237,6 +283,8 @@ export class CanvasApp {
     const selection = this.selectedElement()
     return {
       status: this.status,
+      saveStatus: this.saveState.status,
+      saveReason: this.saveState.reason,
       canUndo: this.history.past.length > 0,
       canRedo: this.history.future.length > 0,
       zoomPct: this.viewport.zoom * 100,
@@ -404,6 +452,12 @@ export class CanvasApp {
     }, { passive: false })
     const sig = this.abort.signal
     window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        if (e.shiftKey) void this.saveBoardAsFile()
+        else this.saveBoardFile()
+        return
+      }
       if (this.isEditingText()) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -445,6 +499,12 @@ export class CanvasApp {
       if (e.code === 'Space') this.spaceDown = false
     }, { signal: sig })
     window.addEventListener('resize', () => this.resize(), { signal: sig })
+    window.addEventListener('pagehide', () => {
+      void this.autosave.flush()
+    }, { signal: sig })
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void this.autosave.flush()
+    }, { signal: sig })
     // Resize when the canvas is laid out, resized, or first painted.
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(this.canvas)
@@ -453,6 +513,59 @@ export class CanvasApp {
 
   private isEditingText(): boolean {
     return !!this.container.querySelector('textarea.editing')
+  }
+
+  /** Commits an open inline editor so file actions include the visible text. */
+  private commitOpenEditor(): void {
+    this.finishText?.(true)
+  }
+
+  private saveBoardFile(): void {
+    this.commitOpenEditor()
+    downloadTextFile(this.fileName, serializeBoardFile(this.scene, this.mount.roomId))
+  }
+
+  private async saveBoardAsFile(): Promise<void> {
+    this.commitOpenEditor()
+    const chosen = await showSaveAsDialog(this.fileName)
+    if (chosen === null) return
+    this.fileName = normalizeFileName(
+      chosen,
+      defaultFileName(this.mount.roomId),
+    )
+    this.autosave.change()
+    await this.autosave.flush()
+    downloadTextFile(this.fileName, serializeBoardFile(this.scene, this.mount.roomId))
+  }
+
+  private async importBoardFile(file: File): Promise<void> {
+    if (file.size > MAX_FILE_BYTES) {
+      await showImportError('This file is too large (max 5 MB).')
+      return
+    }
+    let parsed: ReturnType<typeof parseBoardFile>
+    try {
+      parsed = parseBoardFile(await file.text())
+    } catch (error) {
+      await showImportError(
+        error instanceof Error ? error.message : "This isn't a Tiny Excalidraw board file.",
+      )
+      return
+    }
+    if (this.scene.elements.length > 0 && !(await confirmReplaceBoard())) return
+
+    this.scene = parsed.scene
+    this.history = createHistory()
+    this.selectedId = null
+    this.fileName = fileNameFromSource(
+      file.name,
+      defaultFileName(this.mount.roomId),
+    )
+    this.peer.send({ type: 'replace', scene: this.scene })
+    this.fitToScene()
+    this.render()
+    this.syncUi()
+    this.autosave.change()
   }
 
   private toScene(e: { clientX: number; clientY: number }): Point {
@@ -646,7 +759,7 @@ export class CanvasApp {
   private afterChange() {
     this.render()
     this.syncUi()
-    this.persist()
+    this.autosave.change()
   }
 
   private handleRemote(msg: ClientMessage) {
@@ -661,6 +774,12 @@ export class CanvasApp {
         break
       case 'remove':
         this.scene = removeElement(this.scene, msg.id)
+        break
+      case 'replace':
+        this.finishText?.(false)
+        this.scene = msg.scene
+        this.history = createHistory()
+        this.selectedId = null
         break
       case 'cursor': {
         const color = assignColor(String(msg.name ?? 'remote'))
@@ -710,6 +829,7 @@ export class CanvasApp {
     const finish = (keep: boolean) => {
       if (done) return
       done = true
+      if (this.finishText === finish) this.finishText = null
       const text = ta.value.trim()
       ta.remove()
       this.syncUi()
@@ -736,6 +856,7 @@ export class CanvasApp {
     })
     ta.addEventListener('blur', () => finish(true))
 
+    this.finishText = finish
     grow()
     ta.focus()
     // The pointer gesture that created the editor must not steal focus back.
@@ -820,26 +941,19 @@ export class CanvasApp {
     for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v)
   }
 
-  private persist() {
-    if (this.savedFlag) return
-    this.savedFlag = true
-    window.clearTimeout(this.persistTimer)
-    this.persistTimer = window.setTimeout(() => {
-      this.savedFlag = false
-      const scene = this.scene
-      saveBoard(this.mount.store, {
-        roomId: this.mount.roomId,
-        data: serializeScene(scene),
-        updatedAt: Date.now(),
-      })
-    }, 300)
+  private async leaveToHome(): Promise<void> {
+    await this.autosave.flush()
+    this.destroy()
+    history.replaceState(null, '', location.pathname)
+    if (this.mount.onHome) this.mount.onHome()
   }
 
   destroy() {
+    void this.autosave.flush()
+    this.autosave.dispose()
     this.abort.abort()
     this.ro?.disconnect()
     this.ro = null
-    window.clearTimeout(this.persistTimer)
     this.peer.close()
     this.container.remove()
   }
