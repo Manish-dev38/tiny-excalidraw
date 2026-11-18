@@ -25,6 +25,8 @@ export interface BaseElement {
   /** Fill color; transparent strings mean no fill. */
   background: string
   strokeWidth: number
+  /** Dashed stroke (arrows). Missing/false means solid. */
+  dashed?: boolean
 }
 
 export interface PenElement extends BaseElement {

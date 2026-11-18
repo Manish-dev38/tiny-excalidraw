@@ -66,6 +66,7 @@ describe('makeTextElement', () => {
       strokeColor: '#ffffff',
       background: 'transparent',
       strokeWidth: 2,
+      dashed: false,
     })
     expect(el.strokeColor).toBe('#ffffff')
     expect(el.strokeWidth).toBe(2)

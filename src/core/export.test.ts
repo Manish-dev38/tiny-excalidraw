@@ -66,8 +66,29 @@ describe('toSVG', () => {
     expect(svg).toContain('a &lt; b &amp; c')
   })
 
-  it('renders every infrastructure shape as SVG geometry', () => {
-    const svgFor = (type: 'laptop' | 'database' | 'server' | 'cloud' | 'user') =>
+  it('exports elbow arrows as routed paths, dashed on request', () => {
+    const arrow = (dashed: boolean): ExcalidrawElement => ({
+      id: 'a1',
+      type: 'arrow',
+      x: 0,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 40 },
+      ],
+      strokeColor: '#000',
+      background: 'transparent',
+      strokeWidth: 2,
+      dashed,
+    })
+    const solid = toSVG(addElement(createScene(), arrow(false)))
+    expect(solid).toContain('d="M 0 0 L 50 0 L 50 40 L 100 40"')
+    expect(solid).not.toContain('stroke-dasharray')
+    const dashedSvg = toSVG(addElement(createScene(), arrow(true)))
+    expect(dashedSvg).toContain('stroke-dasharray="8 7"')
+  })
+
+  it('renders every infrastructure shape as SVG geometry', () => {    const svgFor = (type: 'laptop' | 'database' | 'server' | 'cloud' | 'user') =>
       toSVG(
         addElement(createScene(), {
           id: type,

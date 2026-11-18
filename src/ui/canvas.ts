@@ -94,7 +94,12 @@ export class CanvasApp {
   private viewport: Viewport = { x: 40, y: 40, zoom: 1 }
   private tool: UiTool = 'select'
   private panelMode: PanelMode = 'auto'
-  private style: DrawStyle = { strokeColor: '#1e1e1e', background: 'transparent', strokeWidth: 2 }
+  private style: DrawStyle = {
+    strokeColor: '#1e1e1e',
+    background: 'transparent',
+    strokeWidth: 2,
+    dashed: false,
+  }
   private theme: Theme = 'light'
   private gesture: Gesture = null
   private spaceDown = false
@@ -141,6 +146,7 @@ export class CanvasApp {
       onStrokeColor: (color) => this.setStyle({ strokeColor: color }),
       onBackground: (color) => this.setStyle({ background: color }),
       onStrokeWidth: (width) => this.setStyle({ strokeWidth: width }),
+      onDashed: (dashed) => this.setStyle({ dashed }),
     })
     this.panelUpdate = panel.update
 
@@ -293,6 +299,7 @@ export class CanvasApp {
             strokeColor: selection.strokeColor,
             background: selection.background,
             strokeWidth: selection.strokeWidth,
+            dashed: selection.dashed ?? false,
           }
         : { ...this.style },
     }

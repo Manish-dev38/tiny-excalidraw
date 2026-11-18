@@ -143,7 +143,8 @@ function validateElement(value: unknown): ExcalidrawElement {
     value.strokeColor.length > 100 ||
     typeof value.background !== 'string' ||
     value.background.length > 100 ||
-    !isFiniteNumber(value.strokeWidth)
+    !isFiniteNumber(value.strokeWidth) ||
+    (value.dashed !== undefined && typeof value.dashed !== 'boolean')
   ) {
     throw new BoardFileError('This board contains an element with invalid properties.')
   }

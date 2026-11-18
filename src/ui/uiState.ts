@@ -8,7 +8,7 @@ export type UiTool = Tool | 'eraser' | 'select' | 'hand'
 export type PanelMode = 'auto' | 'open' | 'closed'
 
 /** Property groups the panel can render. */
-export type StyleGroup = 'stroke' | 'background' | 'strokeWidth'
+export type StyleGroup = 'stroke' | 'background' | 'strokeWidth' | 'lineStyle'
 
 export type ConnectionStatus = 'connecting' | 'live' | 'offline'
 
@@ -44,8 +44,9 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
   if (selection) {
     switch (selection.type) {
       case 'pen':
-      case 'arrow':
         return ['stroke', 'strokeWidth']
+      case 'arrow':
+        return ['stroke', 'lineStyle', 'strokeWidth']
       case 'text':
         return ['stroke']
       case 'rectangle':
@@ -61,8 +62,9 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
 
   switch (tool) {
     case 'pen':
-    case 'arrow':
       return ['stroke', 'strokeWidth']
+    case 'arrow':
+      return ['stroke', 'lineStyle', 'strokeWidth']
     case 'rectangle':
     case 'ellipse':
     case 'laptop':

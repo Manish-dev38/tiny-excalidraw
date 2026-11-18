@@ -1,4 +1,4 @@
-import { bboxOf, dist, rectContainsPoint } from '../core/geometry'
+import { bboxOf, dist, distToSegment, elbowRoute, rectContainsPoint } from '../core/geometry'
 import type { ExcalidrawElement, Point } from '../core/types'
 
 /**
@@ -7,13 +7,15 @@ import type { ExcalidrawElement, Point } from '../core/types'
  */
 export function acceptsStyle(
   type: ExcalidrawElement['type'],
-  key: 'strokeColor' | 'background' | 'strokeWidth',
+  key: 'strokeColor' | 'background' | 'strokeWidth' | 'dashed',
 ): boolean {
   switch (key) {
     case 'strokeColor':
       return true
     case 'strokeWidth':
       return type !== 'text'
+    case 'dashed':
+      return type === 'arrow'
     case 'background':
       return (
         type === 'rectangle' ||
@@ -52,7 +54,12 @@ export function hitTestElement(el: ExcalidrawElement, p: Point, tolerance = 8): 
     }
     case 'arrow': {
       const [a, b] = el.points
-      return distToSegment(p, a, b) <= Math.max(tolerance, el.strokeWidth / 2 + 2)
+      const route = elbowRoute(a, b)
+      const tol = Math.max(tolerance, el.strokeWidth / 2 + 2)
+      for (let i = 1; i < route.length; i++) {
+        if (distToSegment(p, route[i - 1], route[i]) <= tol) return true
+      }
+      return false
     }
     case 'pen':
       return el.points.some((q) => dist(p, q) <= Math.max(tolerance, el.strokeWidth / 2 + 2))
@@ -61,17 +68,6 @@ export function hitTestElement(el: ExcalidrawElement, p: Point, tolerance = 8): 
       return rectContainsPoint(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY, p.x, p.y)
     }
   }
-}
-
-function distToSegment(p: Point, a: Point, b: Point): number {
-  const abx = b.x - a.x
-  const aby = b.y - a.y
-  const len2 = abx * abx + aby * aby
-  if (len2 === 0) return dist(p, a)
-  let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2
-  t = Math.max(0, Math.min(1, t))
-  const proj = { x: a.x + t * abx, y: a.y + t * aby }
-  return dist(p, proj)
 }
 
 /** Returns a new element translated by (dx, dy); the input is unchanged. */

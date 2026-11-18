@@ -4,6 +4,60 @@ export function dist(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y)
 }
 
+/** Distance from a point to a line segment. */
+export function distToSegment(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x
+  const aby = b.y - a.y
+  const len2 = abx * abx + aby * aby
+  if (len2 === 0) return dist(p, a)
+  let t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2
+  t = Math.max(0, Math.min(1, t))
+  const proj = { x: a.x + t * abx, y: a.y + t * aby }
+  return dist(p, proj)
+}
+
+/** Minimum straight distance for an elbow to be worth drawing (scene units). */
+const MIN_ELBOW = 2
+
+/**
+ * Orthogonal (elbow) route between two points, like architecture sketches:
+ * two runs joined by a mid jog on the dominant axis. Degenerate drags (nearly
+ * horizontal or vertical) stay straight, which is just a collapsed elbow.
+ *
+ * The route always stays inside the endpoints' bounding box, so element
+ * bounds and hit-testing can keep using the two stored points.
+ */
+export function elbowRoute(a: Point, b: Point): Point[] {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (Math.abs(dx) < MIN_ELBOW || Math.abs(dy) < MIN_ELBOW) {
+    return [{ x: a.x, y: a.y }, { x: b.x, y: b.y }]
+  }
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const mx = a.x + dx / 2
+    return [
+      { x: a.x, y: a.y },
+      { x: mx, y: a.y },
+      { x: mx, y: b.y },
+      { x: b.x, y: b.y },
+    ]
+  }
+  const my = a.y + dy / 2
+  return [
+    { x: a.x, y: a.y },
+    { x: a.x, y: my },
+    { x: b.x, y: my },
+    { x: b.x, y: b.y },
+  ]
+}
+
+/** Trace an orthogonal route into the current path. */
+export function traceRoute(ctx: CanvasRenderingContext2D, route: Point[]): void {
+  if (route.length === 0) return
+  ctx.moveTo(route[0].x, route[0].y)
+  for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y)
+}
+
 export function rectContainsPoint(
   x: number,
   y: number,

@@ -1,4 +1,4 @@
-import { bboxOf, LINE_HEIGHT, type BBox } from './geometry'
+import { bboxOf, elbowRoute, LINE_HEIGHT, type BBox } from './geometry'
 import type { Scene } from './scene'
 import type { ExcalidrawElement } from './types'
 
@@ -46,8 +46,10 @@ function elementToSVG(el: ExcalidrawElement): string {
     case 'user':
       return infraShapeToSVG(el)
     case 'arrow': {
-      const [a, b] = el.points
-      return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${esc(el.strokeColor)}" stroke-width="${el.strokeWidth}"/>`
+      const route = elbowRoute(el.points[0], el.points[1])
+      const d = route.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ')
+      const dash = el.dashed ? ' stroke-dasharray="8 7"' : ''
+      return `<path d="${d}" fill="none" stroke="${esc(el.strokeColor)}" stroke-width="${el.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${dash}/>`
     }
     case 'pen': {
       const d = el.points

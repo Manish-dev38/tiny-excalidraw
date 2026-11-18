@@ -640,6 +640,49 @@ button {
   background: currentColor;
 }
 
+/* --- Line style (solid / dashed) --- */
+.line-row {
+  display: flex;
+  gap: 6px;
+}
+
+.line-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon-color);
+  cursor: pointer;
+}
+
+.line-btn:hover {
+  background: var(--button-hover);
+}
+
+.line-btn.active {
+  background: var(--icon-bg-active);
+  color: var(--icon-active-fg);
+}
+
+.l-line {
+  display: block;
+  width: 24px;
+  height: 2px;
+  background: currentColor;
+}
+
+.l-line.is-dashed {
+  background: repeating-linear-gradient(
+    90deg,
+    currentColor 0 5px,
+    transparent 5px 9px
+  );
+}
+
 /* --- Home --- */
 .home {
   display: grid;

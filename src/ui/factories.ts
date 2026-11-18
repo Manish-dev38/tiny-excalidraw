@@ -13,12 +13,15 @@ export interface DrawStyle {
   strokeColor: string
   background: string
   strokeWidth: number
+  /** Dashed stroke, used for arrows. */
+  dashed: boolean
 }
 
 export const DEFAULT_STYLE: DrawStyle = {
   strokeColor: '#000',
   background: 'transparent',
   strokeWidth: 2,
+  dashed: false,
 }
 
 export function makeRectElement(

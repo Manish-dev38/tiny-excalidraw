@@ -1,6 +1,6 @@
 import type { Point } from '../core/types'
 import type { ExcalidrawElement, RectLikeType } from '../core/types'
-import { LINE_HEIGHT } from '../core/geometry'
+import { elbowRoute, LINE_HEIGHT, traceRoute } from '../core/geometry'
 import type { Viewport } from './viewport'
 
 export const HANDWRITING_FONT = "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive"
@@ -143,14 +143,19 @@ export function drawElement(ctx: CanvasRenderingContext2D, el: ExcalidrawElement
       break
     case 'arrow': {
       const [a, b] = el.points
+      const route = elbowRoute(a, b)
       ctx.lineWidth = el.strokeWidth
       ctx.strokeStyle = el.strokeColor
       ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.setLineDash(el.dashed ? [8, 7] : [])
       ctx.beginPath()
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(b.x, b.y)
+      traceRoute(ctx, route)
       ctx.stroke()
-      drawArrowHead(ctx, b, a, el.strokeWidth)
+      ctx.setLineDash([])
+      const tip = route[route.length - 1]
+      const prev = route[route.length - 2]
+      drawArrowHead(ctx, tip, prev, el.strokeWidth)
       break
     }
     case 'text': {
@@ -224,17 +229,22 @@ export function renderShape(
   type: RectLikeType | 'arrow',
   a: Point,
   b: Point,
-  style: { strokeColor: string; strokeWidth: number; background: string },
+  style: { strokeColor: string; strokeWidth: number; background: string; dashed?: boolean },
 ): void {
   if (type === 'arrow') {
+    const route = elbowRoute(a, b)
     ctx.lineWidth = style.strokeWidth
     ctx.strokeStyle = style.strokeColor
     ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.setLineDash(style.dashed ? [8, 7] : [])
     ctx.beginPath()
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
+    traceRoute(ctx, route)
     ctx.stroke()
-    drawArrowHead(ctx, b, a, style.strokeWidth)
+    ctx.setLineDash([])
+    const tip = route[route.length - 1]
+    const prev = route[route.length - 2]
+    drawArrowHead(ctx, tip, prev, style.strokeWidth)
     return
   }
   const x = Math.min(a.x, b.x)
