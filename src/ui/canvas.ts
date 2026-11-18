@@ -20,6 +20,7 @@ import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
 import { clipboard, cloneElements } from './clipboard'
+import { textEditOp } from './textEdit'
 import { makeArrowElement, makeEllipseElement, makePenElement, makeRectElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
@@ -45,6 +46,7 @@ import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
 import { hitTestTop, translateElement, acceptsStyle, elementsInRect } from './select'
 import type { ExcalidrawElement } from '../core/types'
+import type { TextElement } from '../core/types'
 import { assignColor, availablePeers, formatName } from './participants'
 
 const MIN_DRAG = 2
@@ -479,6 +481,14 @@ export class CanvasApp {
     c.addEventListener('pointermove', (e) => this.onPointerMove(e))
     c.addEventListener('pointerup', () => this.onPointerUp())
     c.addEventListener('pointercancel', () => this.onPointerUp())
+    c.addEventListener('dblclick', (e) => {
+      if (this.isEditingText()) return
+      const hit = hitTestTop(this.scene.elements, this.toScene(e))
+      if (hit?.type === 'text') {
+        e.preventDefault()
+        this.beginText({ x: hit.x, y: hit.y }, hit)
+      }
+    })
     c.addEventListener('wheel', (e) => {
       e.preventDefault()
       const d = e.ctrlKey ? Math.exp(-e.deltaY * 0.004) : Math.exp(-e.deltaY * 0.0015)
@@ -495,6 +505,10 @@ export class CanvasApp {
         return
       }
       if (this.isEditingText()) return
+      const target = e.target as HTMLElement | null
+      const inTextfield =
+        !!target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) this.redo()
@@ -511,11 +525,15 @@ export class CanvasApp {
         this.selectTool('select')
         return
       }
+      if (!inTextfield && e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const el = this.selectedElement()
+        if (el?.type === 'text') {
+          e.preventDefault()
+          this.beginText({ x: el.x, y: el.y }, el)
+          return
+        }
+      }
       // Clipboard shortcuts skip text fields (dialogs keep native behaviour).
-      const target = e.target as HTMLElement | null
-      const inTextfield =
-        !!target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (this.copySelection()) e.preventDefault()
         return
@@ -962,10 +980,13 @@ export class CanvasApp {
     }
   }
 
-  private beginText(at: Point) {
+  private beginText(at: Point, existing?: TextElement) {
+    // Never stack editors: commit whatever is open first.
+    this.finishText?.(true)
     const rect = this.canvas.getBoundingClientRect()
-    const screen = sceneToScreen(this.viewport, at)
-    const fontSize = 24
+    const anchor = existing ? { x: existing.x, y: existing.y } : at
+    const screen = sceneToScreen(this.viewport, anchor)
+    const fontSize = existing ? existing.fontSize : 24
     const ta = document.createElement('textarea')
     ta.className = 'editing'
     ta.rows = 1
@@ -973,7 +994,8 @@ export class CanvasApp {
     ta.style.left = `${rect.left + screen.x}px`
     ta.style.top = `${rect.top + screen.y}px`
     ta.style.fontSize = `${fontSize * this.viewport.zoom}px`
-    ta.style.color = this.style.strokeColor
+    ta.style.color = existing ? existing.strokeColor : this.style.strokeColor
+    if (existing) ta.value = existing.text
     this.container.appendChild(ta)
 
     let done = false
@@ -990,6 +1012,11 @@ export class CanvasApp {
       const text = ta.value.trim()
       ta.remove()
       this.syncUi()
+      if (existing) {
+        if (keep) this.commitTextEdit(existing, text)
+        this.render()
+        return
+      }
       if (keep && text) {
         const el = makeTextElement(genId(), at, text, fontSize, this.style)
         this.commitCreated(el)
@@ -1017,6 +1044,27 @@ export class CanvasApp {
       if (!done) ta.focus()
     })
     this.syncUi()
+  }
+
+  /** Applies an inline edit to an existing text element. */
+  private commitTextEdit(existing: TextElement, text: string) {
+    this.selectedIds = [existing.id]
+    this.tool = 'select'
+    this.updateCursor()
+    const op = textEditOp(existing, text)
+    if (!op) {
+      this.syncUi()
+      return
+    }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    if (op.type === 'remove') {
+      this.selectedIds = []
+      this.syncUi()
+      return
+    }
+    this.afterChange()
   }
 
   private fitToScene() {
