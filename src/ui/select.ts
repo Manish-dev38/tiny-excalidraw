@@ -2,6 +2,24 @@ import { bboxOf, dist, rectContainsPoint } from '../core/geometry'
 import type { ExcalidrawElement, Point } from '../core/types'
 
 /**
+ * Which style properties are meaningful for an element type. Used to keep
+ * batch style changes from writing meaningless fields (e.g. background on text).
+ */
+export function acceptsStyle(
+  type: ExcalidrawElement['type'],
+  key: 'strokeColor' | 'background' | 'strokeWidth',
+): boolean {
+  switch (key) {
+    case 'strokeColor':
+      return true
+    case 'strokeWidth':
+      return type !== 'text'
+    case 'background':
+      return type === 'rectangle' || type === 'ellipse'
+  }
+}
+
+/**
  * Hit-test a single element at a scene point. Shape elements use their exact
  * filled/stroked region; pen strokes hit within a small distance of any point.
  */
@@ -81,4 +99,33 @@ export function hitTestTop(
     if (hitTestElement(elements[i], p, tolerance)) return elements[i]
   }
   return null
+}
+
+/** True when two rectangles overlap (touching edges count). */
+export function rectsIntersect(
+  a: { minX: number; minY: number; maxX: number; maxY: number },
+  b: { minX: number; minY: number; maxX: number; maxY: number },
+): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+}
+
+/**
+ * Elements whose bounds intersect the marquee rect (any corner order).
+ * Selection keeps scene order so z-index is preserved on group ops.
+ */
+export function elementsInRect(
+  elements: ExcalidrawElement[],
+  a: Point,
+  b: Point,
+): ExcalidrawElement[] {
+  const rect = {
+    minX: Math.min(a.x, b.x),
+    minY: Math.min(a.y, b.y),
+    maxX: Math.max(a.x, b.x),
+    maxY: Math.max(a.y, b.y),
+  }
+  return elements.filter((el) => {
+    const bb = bboxOf(el)
+    return rectsIntersect(rect, bb)
+  })
 }

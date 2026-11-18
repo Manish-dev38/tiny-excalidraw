@@ -42,7 +42,7 @@ import type { Theme } from './palette'
 import type { BoardRepository } from './storage'
 import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
-import { hitTestTop, translateElement } from './select'
+import { hitTestTop, translateElement, acceptsStyle, elementsInRect } from './select'
 import type { ExcalidrawElement } from '../core/types'
 import { assignColor, availablePeers, formatName } from './participants'
 
@@ -57,11 +57,11 @@ type Gesture =
   | { kind: 'shape'; type: 'rectangle' | 'ellipse' | 'arrow'; start: Point; current: Point }
   | { kind: 'eraser'; points: Point[] }
   | { kind: 'pan'; last: Point }
+  | { kind: 'marquee'; start: Point; current: Point }
   | {
       kind: 'move'
-      id: string
-      /** The element as it was when the move started. */
-      original: ExcalidrawElement
+      /** One entry per selected element, as they were when the move started. */
+      items: { id: string; original: ExcalidrawElement }[]
       startScene: Point
       lastScene: Point
       moved: boolean
@@ -91,7 +91,8 @@ export class CanvasApp {
   private spaceDown = false
   private peer: PeerSession
   private remoteCursor: { x: number; y: number; name: string; color: string } | null = null
-  private selectedId: string | null = null
+  /** Ordered selection; the last id is the primary element for panel values. */
+  private selectedIds: string[] = []
   private selfName = availablePeers()
   private abort: AbortController = new AbortController()
   private ro: ResizeObserver | null = null
@@ -259,8 +260,15 @@ export class CanvasApp {
   }
 
   private selectedElement(): ExcalidrawElement | null {
-    if (!this.selectedId) return null
-    return getElement(this.scene, this.selectedId) ?? null
+    const id = this.selectedIds[this.selectedIds.length - 1]
+    if (!id) return null
+    return getElement(this.scene, id) ?? null
+  }
+
+  private selectedElements(): ExcalidrawElement[] {
+    return this.selectedIds
+      .map((id) => getElement(this.scene, id))
+      .filter((el): el is ExcalidrawElement => !!el)
   }
 
   private panelState(): PropertiesState {
@@ -304,7 +312,7 @@ export class CanvasApp {
 
   private selectTool(tool: UiTool) {
     this.tool = tool
-    if (tool !== 'select') this.selectedId = null
+    if (tool !== 'select') this.selectedIds = []
     // Keep an explicit hamburger pin; `auto` continues to follow the tool.
     this.updateCursor()
     this.syncUi()
@@ -317,13 +325,22 @@ export class CanvasApp {
 
   private setStyle(patch: Partial<StyleValues>) {
     this.style = { ...this.style, ...patch }
-    const selection = this.selectedElement()
-    if (!selection) {
+    const selection = this.selectedElements()
+    if (selection.length === 0) {
       this.render()
       this.syncUi()
       return
     }
-    const op: Op = { type: 'update', id: selection.id, prev: { ...selection }, next: patch }
+    const key = Object.keys(patch)[0] as keyof StyleValues
+    const ops: Op[] = selection
+      .filter((el) => acceptsStyle(el.type, key))
+      .map((el): Op => ({ type: 'update', id: el.id, prev: { ...el }, next: patch }))
+    if (ops.length === 0) {
+      this.render()
+      this.syncUi()
+      return
+    }
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
     this.broadcastOp(op)
@@ -370,7 +387,7 @@ export class CanvasApp {
     }
     if (this.gesture) this.drawGesture(this.gesture)
     if (this.remoteCursor) this.drawCursor()
-    if (this.selectedId) this.drawSelection()
+    if (this.selectedIds.length > 0) this.drawSelection()
   }
 
   private drawGesture(g: NonNullable<Gesture>) {
@@ -380,6 +397,22 @@ export class CanvasApp {
       renderShape(this.ctx, g.type, g.start, g.current, this.style)
     } else if (g.kind === 'eraser') {
       renderPath(this.ctx, g.points, { strokeColor: '#868e96', strokeWidth: 8 })
+    } else if (g.kind === 'marquee') {
+      const zoom = this.viewport.zoom
+      const x = Math.min(g.start.x, g.current.x)
+      const y = Math.min(g.start.y, g.current.y)
+      const w = Math.abs(g.current.x - g.start.x)
+      const h = Math.abs(g.current.y - g.start.y)
+      this.ctx.save()
+      this.ctx.strokeStyle = '#1971c2'
+      this.ctx.fillStyle = 'rgba(25, 113, 194, 0.05)'
+      this.ctx.lineWidth = 1 / zoom
+      this.ctx.setLineDash([4 / zoom, 3 / zoom])
+      this.ctx.beginPath()
+      this.ctx.rect(x, y, w, h)
+      this.ctx.fill()
+      this.ctx.stroke()
+      this.ctx.restore()
     }
   }
 
@@ -417,24 +450,24 @@ export class CanvasApp {
   }
 
   private drawSelection() {
-    const el = getElement(this.scene, this.selectedId!)
-    if (!el) return
-    const b = bboxOf(el)
-    const pad = 4
-    this.ctx.save()
-    this.ctx.strokeStyle = '#1971c2'
-    this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
-    this.ctx.lineWidth = 1 / this.viewport.zoom
-    this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
-    const x = b.minX - pad
-    const y = b.minY - pad
-    const w = b.maxX - b.minX + pad * 2
-    const h = b.maxY - b.minY + pad * 2
-    this.ctx.beginPath()
-    this.ctx.rect(x, y, w, h)
-    this.ctx.fill()
-    this.ctx.stroke()
-    this.ctx.restore()
+    for (const el of this.selectedElements()) {
+      const b = bboxOf(el)
+      const pad = 4
+      this.ctx.save()
+      this.ctx.strokeStyle = '#1971c2'
+      this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
+      this.ctx.lineWidth = 1 / this.viewport.zoom
+      this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
+      const x = b.minX - pad
+      const y = b.minY - pad
+      const w = b.maxX - b.minX + pad * 2
+      const h = b.maxY - b.minY + pad * 2
+      this.ctx.beginPath()
+      this.ctx.rect(x, y, w, h)
+      this.ctx.fill()
+      this.ctx.stroke()
+      this.ctx.restore()
+    }
   }
 
   private bindEvents() {
@@ -471,7 +504,7 @@ export class CanvasApp {
         return
       }
       if (e.key === 'Escape') {
-        this.selectedId = null
+        this.selectedIds = []
         this.selectTool('select')
         return
       }
@@ -480,10 +513,9 @@ export class CanvasApp {
         e.preventDefault()
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedIds.length > 0) {
         e.preventDefault()
-        this.commitRemove(this.selectedId)
-        this.selectedId = null
+        this.removeSelected()
         this.syncUi()
         return
       }
@@ -556,7 +588,7 @@ export class CanvasApp {
 
     this.scene = parsed.scene
     this.history = createHistory()
-    this.selectedId = null
+    this.selectedIds = []
     this.fileName = fileNameFromSource(
       file.name,
       defaultFileName(this.mount.roomId),
@@ -584,17 +616,36 @@ export class CanvasApp {
     if (this.tool === 'select') {
       const hit = hitTestTop(this.scene.elements, p)
       if (hit) {
-        this.selectedId = hit.id
+        if (e.shiftKey) {
+          // Shift-click toggles membership; no move gesture on a toggle.
+          this.selectedIds = this.selectedIds.includes(hit.id)
+            ? this.selectedIds.filter((id) => id !== hit.id)
+            : [...this.selectedIds, hit.id]
+          this.syncUi()
+          this.render()
+          this.canvas.setPointerCapture(e.pointerId)
+          return
+        }
+        if (!this.selectedIds.includes(hit.id)) {
+          this.selectedIds = [hit.id]
+        }
+        const items = this.selectedElements().map((el) => ({ id: el.id, original: el }))
         this.gesture = {
           kind: 'move',
-          id: hit.id,
-          original: hit,
+          items,
           startScene: p,
           lastScene: p,
           moved: false,
         }
+      } else if (e.shiftKey) {
+        // Shift-click on empty canvas keeps the current selection.
+        this.syncUi()
+        this.render()
+        this.canvas.setPointerCapture(e.pointerId)
+        return
       } else {
-        this.selectedId = null
+        this.selectedIds = []
+        this.gesture = { kind: 'marquee', start: p, current: p }
       }
       this.syncUi()
       this.render()
@@ -655,14 +706,18 @@ export class CanvasApp {
       this.gesture.current = p
     } else if (this.gesture.kind === 'eraser') {
       this.gesture.points.push(p)
+    } else if (this.gesture.kind === 'marquee') {
+      this.gesture.current = p
     } else if (this.gesture.kind === 'move') {
       const g = this.gesture
       const dx = p.x - g.startScene.x
       const dy = p.y - g.startScene.y
       if (Math.hypot(dx, dy) >= MIN_DRAG) g.moved = true
       if (g.moved) {
-        const moved = translateElement(g.original, { dx, dy })
-        this.scene = updateElement(this.scene, g.id, moved as Partial<ExcalidrawElement>)
+        for (const { id, original } of g.items) {
+          const moved = translateElement(original, { dx, dy })
+          this.scene = updateElement(this.scene, id, moved as Partial<ExcalidrawElement>)
+        }
       }
       g.lastScene = p
     }
@@ -694,17 +749,21 @@ export class CanvasApp {
         const ids = eraserHitTest(this.scene, g.points, 8)
         for (const id of ids) this.commitRemove(id)
       }
+    } else if (g.kind === 'marquee') {
+      if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
+        const hits = elementsInRect(this.scene.elements, g.start, g.current)
+        this.selectedIds = hits.map((el) => el.id)
+        this.syncUi()
+      }
     } else if (g.kind === 'move') {
       if (g.moved) {
         const dx = g.lastScene.x - g.startScene.x
         const dy = g.lastScene.y - g.startScene.y
-        const next = translateElement(g.original, { dx, dy })
-        const op: Op = {
-          type: 'update',
-          id: g.id,
-          prev: g.original,
-          next: next as Partial<ExcalidrawElement>,
-        }
+        const ops: Op[] = g.items.map(({ id, original }): Op => {
+          const next = translateElement(original, { dx, dy })
+          return { type: 'update', id, prev: original, next: next as Partial<ExcalidrawElement> }
+        })
+        const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
         this.scene = applyOp(this.scene, op)
         this.history = record(this.history, op)
         this.broadcastOp(op)
@@ -728,7 +787,7 @@ export class CanvasApp {
    * drawn instead of silently only affecting future shapes.
    */
   private commitCreated(element: import('../core/types').ExcalidrawElement) {
-    this.selectedId = element.id
+    this.selectedIds = [element.id]
     this.tool = 'select'
     this.updateCursor()
     this.commitAdd(element)
@@ -744,10 +803,29 @@ export class CanvasApp {
     this.afterChange()
   }
 
+  /** Removes the whole selection as one undoable step. */
+  private removeSelected() {
+    const els = this.selectedElements()
+    if (els.length === 0) return
+    const ops: Op[] = els.map((el): Op => ({ type: 'remove', element: el }))
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    this.selectedIds = []
+    this.afterChange()
+  }
+
   private broadcastOp(op: Op) {
-    if (op.type === 'add') this.peer.send({ type: 'add', element: op.element })
-    else if (op.type === 'remove') this.peer.send({ type: 'remove', id: op.element.id })
-    else this.peer.send({ type: 'update', id: op.id, patch: op.next })
+    if (op.type === 'batch') {
+      for (const child of op.ops) this.broadcastOp(child)
+    } else if (op.type === 'add') {
+      this.peer.send({ type: 'add', element: op.element })
+    } else if (op.type === 'remove') {
+      this.peer.send({ type: 'remove', id: op.element.id })
+    } else {
+      this.peer.send({ type: 'update', id: op.id, patch: op.next })
+    }
   }
 
   private undo() {
@@ -791,7 +869,7 @@ export class CanvasApp {
         this.finishText?.(false)
         this.scene = msg.scene
         this.history = createHistory()
-        this.selectedId = null
+        this.selectedIds = []
         break
       case 'cursor': {
         const color = assignColor(String(msg.name ?? 'remote'))

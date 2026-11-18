@@ -54,6 +54,59 @@ describe('invertOp', () => {
     const op: Op = { type: 'update', id: 'a', prev: { x: 0 }, next: { x: 5 } }
     expect(invertOp(op)).toEqual({ type: 'update', id: 'a', prev: { x: 5 }, next: { x: 0 } })
   })
+  it('inverts a batch in reverse order', () => {
+    const op: Op = {
+      type: 'batch',
+      ops: [
+        { type: 'add', element: rect('a') },
+        { type: 'update', id: 'a', prev: { x: 0 }, next: { x: 5 } },
+      ],
+    }
+    const inverse = invertOp(op)
+    expect(inverse).toEqual({
+      type: 'batch',
+      ops: [
+        { type: 'update', id: 'a', prev: { x: 5 }, next: { x: 0 } },
+        { type: 'remove', element: rect('a') },
+      ],
+    })
+  })
+})
+
+describe('batch ops', () => {
+  it('applies every child op in order', () => {
+    let scene = createScene()
+    scene = applyOp(scene, {
+      type: 'batch',
+      ops: [
+        { type: 'add', element: rect('a') },
+        { type: 'add', element: rect('b') },
+        { type: 'update', id: 'b', prev: { x: 0 }, next: { x: 7 } },
+      ],
+    })
+    expect(getElement(scene, 'a')).toBeDefined()
+    expect(getElement(scene, 'b')).toMatchObject({ x: 7 })
+  })
+  it('survives an undo round-trip as one step', () => {
+    let scene = addElement(createScene(), rect('a'))
+    scene = addElement(scene, rect('b'))
+    let h = createHistory()
+    const op: Op = {
+      type: 'batch',
+      ops: [
+        { type: 'update', id: 'a', prev: { x: 0 }, next: { x: 9 } },
+        { type: 'remove', element: rect('b') },
+      ],
+    }
+    scene = applyOp(scene, op)
+    h = record(h, op)
+    expect(getElement(scene, 'b')).toBeUndefined()
+
+    const undone = undo(h)!
+    scene = applyOp(scene, undone.op)
+    expect(getElement(scene, 'b')).toBeDefined()
+    expect(getElement(scene, 'a')).toMatchObject({ x: 0 })
+  })
 })
 
 describe('record / undo / redo', () => {

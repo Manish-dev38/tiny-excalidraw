@@ -6,6 +6,8 @@ export type Op =
   | { type: 'add'; element: ExcalidrawElement }
   | { type: 'remove'; element: ExcalidrawElement }
   | { type: 'update'; id: string; prev: Partial<ExcalidrawElement>; next: Partial<ExcalidrawElement> }
+  /** A group of ops applied as one undoable step (multi-select actions). */
+  | { type: 'batch'; ops: Op[] }
 
 export interface History {
   past: Op[]
@@ -27,6 +29,8 @@ export function applyOp(scene: Scene, op: Op): Scene {
       return removeElement(scene, op.element.id)
     case 'update':
       return updateElement(scene, op.id, op.next)
+    case 'batch':
+      return op.ops.reduce(applyOp, scene)
   }
 }
 
@@ -38,6 +42,8 @@ export function invertOp(op: Op): Op {
       return { type: 'add', element: op.element }
     case 'update':
       return { type: 'update', id: op.id, prev: op.next, next: op.prev }
+    case 'batch':
+      return { type: 'batch', ops: [...op.ops].reverse().map(invertOp) }
   }
 }
 
