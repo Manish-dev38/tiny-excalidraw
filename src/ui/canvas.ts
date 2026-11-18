@@ -677,7 +677,7 @@ export class CanvasApp {
     if (g.kind === 'pan') return
     if (g.kind === 'pen') {
       if (g.points.length > 1) {
-        this.commitAdd(makePenElement(genId(), g.points, this.style))
+        this.commitCreated(makePenElement(genId(), g.points, this.style))
       }
     } else if (g.kind === 'shape') {
       if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
@@ -687,7 +687,7 @@ export class CanvasApp {
             : g.type === 'ellipse'
               ? makeEllipseElement(genId(), g.start, g.current, this.style)
               : makeArrowElement(genId(), g.start, g.current, this.style)
-        this.commitAdd(el)
+        this.commitCreated(el)
       }
     } else if (g.kind === 'eraser') {
       if (g.points.length > 0) {
@@ -720,6 +720,18 @@ export class CanvasApp {
     this.history = record(this.history, op)
     this.peer.send({ type: 'add', element })
     this.afterChange()
+  }
+
+  /**
+   * Commits a freshly drawn element and selects it, switching to the select
+   * tool. Style changes in the properties panel then apply to the shape just
+   * drawn instead of silently only affecting future shapes.
+   */
+  private commitCreated(element: import('../core/types').ExcalidrawElement) {
+    this.selectedId = element.id
+    this.tool = 'select'
+    this.updateCursor()
+    this.commitAdd(element)
   }
 
   private commitRemove(id: string) {
@@ -835,11 +847,7 @@ export class CanvasApp {
       this.syncUi()
       if (keep && text) {
         const el = makeTextElement(genId(), at, text, fontSize, this.style)
-        this.selectedId = el.id
-        this.tool = 'select'
-        this.commitAdd(el)
-        this.updateCursor()
-        this.syncUi()
+        this.commitCreated(el)
       }
       this.render()
     }
