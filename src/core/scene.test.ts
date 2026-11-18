@@ -51,6 +51,25 @@ describe('updateElement', () => {
     const base = addElement(createScene(), rect('a'))
     expect(updateElement(base, 'nope', { strokeColor: '#f00' })).toBe(base)
   })
+  it('removes optional properties patched as undefined', () => {
+    const arrow: ExcalidrawElement = {
+      ...rect('a'),
+      type: 'arrow',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      startBinding: { shapeId: 's1' },
+      endBinding: { shapeId: 's2' },
+    }
+    const base = addElement(createScene(), arrow)
+    const next = updateElement(base, 'a', { startBinding: undefined, endBinding: undefined })
+    const el = getElement(next, 'a')!
+    expect('startBinding' in el).toBe(false)
+    expect('endBinding' in el).toBe(false)
+    // The input scene keeps its bindings.
+    expect(getElement(base, 'a')).toMatchObject({ startBinding: { shapeId: 's1' } })
+  })
 })
 
 describe('removeElement', () => {

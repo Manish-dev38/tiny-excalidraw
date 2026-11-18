@@ -65,4 +65,41 @@ describe('cloneElements', () => {
     cloneElements([source], () => 'new', 5, 5)
     expect(source).toEqual(rect('a'))
   })
+  it('remaps arrow bindings to the cloned shapes', () => {
+    const shape = rect('shape')
+    const arrow: ExcalidrawElement = {
+      id: 'arrow',
+      type: 'arrow',
+      x: 0,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      strokeColor: '#000',
+      background: 'transparent',
+      strokeWidth: 1,
+      endBinding: { shapeId: 'shape' },
+    }
+    const clones = cloneElements([shape, arrow], (i) => `new-${i}`, 20, 20)
+    expect(clones[1]).toMatchObject({ id: 'new-1', endBinding: { shapeId: 'new-0' } })
+  })
+  it('drops bindings to shapes outside the copied set', () => {
+    const arrow: ExcalidrawElement = {
+      id: 'arrow',
+      type: 'arrow',
+      x: 0,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      strokeColor: '#000',
+      background: 'transparent',
+      strokeWidth: 1,
+      endBinding: { shapeId: 'outside' },
+    }
+    const clones = cloneElements([arrow], () => 'new', 0, 0)
+    expect(clones[0].type === 'arrow' && clones[0].endBinding).toBeFalsy()
+  })
 })

@@ -22,6 +22,13 @@ import type { RectLikeType } from '../core/types'
 import { eraserHitTest } from './eraser'
 import { clipboard, cloneElements } from './clipboard'
 import { textEditOp } from './textEdit'
+import {
+  bindArrowEnds,
+  clearArrowBindings,
+  detachRemoved,
+  isBoxShape,
+  resnapArrow,
+} from '../core/binding'
 import { makeArrowElement, makePenElement, makeShapeElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
@@ -47,7 +54,7 @@ import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
 import { hitTestTop, translateElement, acceptsStyle, elementsInRect } from './select'
 import type { ExcalidrawElement } from '../core/types'
-import type { TextElement } from '../core/types'
+import type { ArrowElement, RectLikeElement, TextElement } from '../core/types'
 import { assignColor, availablePeers, formatName } from './participants'
 
 const MIN_DRAG = 2
@@ -71,6 +78,8 @@ type Gesture =
       kind: 'move'
       /** One entry per selected element, as they were when the move started. */
       items: { id: string; original: ExcalidrawElement }[]
+      /** Arrows attached to a moved shape, snapped live during the drag. */
+      attached: { id: string; original: ArrowElement }[]
       startScene: Point
       lastScene: Point
       moved: boolean
@@ -690,9 +699,11 @@ export class CanvasApp {
           this.selectedIds = [hit.id]
         }
         const items = this.selectedElements().map((el) => ({ id: el.id, original: el }))
+        const attached = this.attachedArrowsTo(items)
         this.gesture = {
           kind: 'move',
           items,
+          attached,
           startScene: p,
           lastScene: p,
           moved: false,
@@ -779,9 +790,16 @@ export class CanvasApp {
       const dy = p.y - g.startScene.y
       if (Math.hypot(dx, dy) >= MIN_DRAG) g.moved = true
       if (g.moved) {
+        const movedShapes = new Map<string, RectLikeElement>()
         for (const { id, original } of g.items) {
           const moved = translateElement(original, { dx, dy })
           this.scene = updateElement(this.scene, id, moved as Partial<ExcalidrawElement>)
+          if (isBoxShape(moved)) movedShapes.set(id, moved)
+        }
+        // Arrows attached to a moved shape follow it live.
+        for (const { id, original } of g.attached) {
+          const snapped = resnapArrow(original, movedShapes) ?? original
+          this.scene = updateElement(this.scene, id, snapped as Partial<ExcalidrawElement>)
         }
       }
       g.lastScene = p
@@ -803,7 +821,10 @@ export class CanvasApp {
       if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
         const el =
           g.type === 'arrow'
-            ? makeArrowElement(genId(), g.start, g.current, this.style)
+            ? bindArrowEnds(
+                makeArrowElement(genId(), g.start, g.current, this.style),
+                this.scene.elements,
+              )
             : makeShapeElement(genId(), g.type, g.start, g.current, this.style)
         this.commitCreated(el)
       }
@@ -823,9 +844,27 @@ export class CanvasApp {
         const dx = g.lastScene.x - g.startScene.x
         const dy = g.lastScene.y - g.startScene.y
         const ops: Op[] = g.items.map(({ id, original }): Op => {
-          const next = translateElement(original, { dx, dy })
-          return { type: 'update', id, prev: original, next: next as Partial<ExcalidrawElement> }
+          const moved = translateElement(original, { dx, dy })
+          // Moving an arrow itself detaches it from any shape.
+          const next = moved.type === 'arrow' ? clearArrowBindings(moved) : moved
+          return {
+            type: 'update',
+            id,
+            prev: original,
+            next: next.type === 'arrow' ? this.arrowPatch(next) : next,
+          }
         })
+        // Attached arrows that followed the moved shapes are part of the step.
+        for (const { id, original } of g.attached) {
+          const final = getElement(this.scene, id)
+          if (!final || final === original) continue
+          ops.push({
+            type: 'update',
+            id,
+            prev: original,
+            next: final as Partial<ExcalidrawElement>,
+          })
+        }
         const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
         this.scene = applyOp(this.scene, op)
         this.history = record(this.history, op)
@@ -859,10 +898,14 @@ export class CanvasApp {
   private commitRemove(id: string) {
     const el = getElement(this.scene, id)
     if (!el) return
-    const op: Op = { type: 'remove', element: el }
+    const ops: Op[] = [
+      { type: 'remove', element: el },
+      ...this.detachArrowsFor(new Set([id])),
+    ]
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
-    this.peer.send({ type: 'remove', id })
+    this.broadcastOp(op)
     this.afterChange()
   }
 
@@ -870,13 +913,63 @@ export class CanvasApp {
   private removeSelected() {
     const els = this.selectedElements()
     if (els.length === 0) return
-    const ops: Op[] = els.map((el): Op => ({ type: 'remove', element: el }))
+    const ids = new Set(els.map((el) => el.id))
+    const ops: Op[] = [
+      ...els.map((el): Op => ({ type: 'remove', element: el })),
+      ...this.detachArrowsFor(ids),
+    ]
     const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
     this.broadcastOp(op)
     this.selectedIds = []
     this.afterChange()
+  }
+
+  /** Arrows not being removed that point at one of the removed shapes. */
+  private detachArrowsFor(removedIds: ReadonlySet<string>): Op[] {
+    const ops: Op[] = []
+    for (const el of this.scene.elements) {
+      if (el.type !== 'arrow' || removedIds.has(el.id)) continue
+      const next = detachRemoved(el, removedIds)
+      if (next) {
+        ops.push({
+          type: 'update',
+          id: el.id,
+          prev: el,
+          next: this.arrowPatch(next),
+        })
+      }
+    }
+    return ops
+  }
+
+  /**
+   * Patch for an arrow update. Absent binding keys are written explicitly as
+   * `undefined` so `updateElement` removes them (merge alone cannot).
+   */
+  private arrowPatch(arrow: ArrowElement): Partial<ExcalidrawElement> {
+    return { ...arrow, startBinding: arrow.startBinding, endBinding: arrow.endBinding }
+  }
+
+  /** Snapshot of arrows bound to a shape in the current move selection. */
+  private attachedArrowsTo(
+    items: { id: string; original: ExcalidrawElement }[],
+  ): { id: string; original: ArrowElement }[] {
+    const movingShapeIds = new Set(
+      items.filter((it) => isBoxShape(it.original)).map((it) => it.id),
+    )
+    if (movingShapeIds.size === 0) return []
+    const movingIds = new Set(items.map((it) => it.id))
+    return this.scene.elements
+      .filter(
+        (el): el is ArrowElement =>
+          el.type === 'arrow' &&
+          !movingIds.has(el.id) &&
+          ((!!el.startBinding && movingShapeIds.has(el.startBinding.shapeId)) ||
+            (!!el.endBinding && movingShapeIds.has(el.endBinding.shapeId))),
+      )
+      .map((el) => ({ id: el.id, original: el }))
   }
 
   /** Copies the selection to the internal clipboard. Returns false if empty. */
@@ -925,7 +1018,13 @@ export class CanvasApp {
     } else if (op.type === 'remove') {
       this.peer.send({ type: 'remove', id: op.element.id })
     } else {
-      this.peer.send({ type: 'update', id: op.id, patch: op.next })
+      // JSON drops undefined keys, so removals travel as null and are
+      // converted back in `handleRemote`.
+      const patch: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(op.next)) {
+        patch[key] = value === undefined ? null : value
+      }
+      this.peer.send({ type: 'update', id: op.id, patch: patch as Partial<ExcalidrawElement> })
     }
   }
 
@@ -960,9 +1059,15 @@ export class CanvasApp {
           this.scene = addElement(this.scene, msg.element)
         }
         break
-      case 'update':
-        this.scene = updateElement(this.scene, msg.id, msg.patch)
+      case 'update': {
+        // `null` means "remove this optional property" (see broadcastOp).
+        const patch: Record<string, unknown> = { ...msg.patch }
+        for (const key of Object.keys(patch)) {
+          if (patch[key] === null) patch[key] = undefined
+        }
+        this.scene = updateElement(this.scene, msg.id, patch as Partial<ExcalidrawElement>)
         break
+      }
       case 'remove':
         this.scene = removeElement(this.scene, msg.id)
         break

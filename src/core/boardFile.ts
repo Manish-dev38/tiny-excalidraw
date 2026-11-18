@@ -116,6 +116,15 @@ function isPoint(value: unknown): value is Point {
   return isRecord(value) && isFiniteNumber(value.x) && isFiniteNumber(value.y)
 }
 
+function isBinding(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.shapeId === 'string' &&
+    value.shapeId.length > 0 &&
+    value.shapeId.length <= 200
+  )
+}
+
 function readElements(value: unknown): unknown[] {
   if (!Array.isArray(value)) throw new BoardFileError('This board file is missing its drawing.')
   if (value.length > MAX_ELEMENTS) {
@@ -182,6 +191,12 @@ function validateElement(value: unknown): ExcalidrawElement {
         !value.points.every(isPoint)
       ) {
         throw new BoardFileError('This board contains an arrow with invalid points.')
+      }
+      if (
+        (value.startBinding !== undefined && !isBinding(value.startBinding)) ||
+        (value.endBinding !== undefined && !isBinding(value.endBinding))
+      ) {
+        throw new BoardFileError('This board contains an arrow with an invalid attachment.')
       }
       break
     case 'text':

@@ -230,6 +230,23 @@ describe('parseBoardFile', () => {
     ).toThrow('text with invalid properties')
   })
 
+  it('accepts valid arrow attachments and rejects malformed ones', () => {
+    const arrow = {
+      ...rect,
+      type: 'arrow',
+      points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+      endBinding: { shapeId: 'shape-1' },
+    }
+    const parsed = parseBoardFile(envelope([arrow]))
+    expect(parsed.scene.elements[0]).toMatchObject({ endBinding: { shapeId: 'shape-1' } })
+    expect(() =>
+      parseBoardFile(envelope([{ ...arrow, startBinding: { shapeId: '' } }])),
+    ).toThrow('arrow with an invalid attachment')
+    expect(() =>
+      parseBoardFile(envelope([{ ...arrow, endBinding: 'shape-1' }])),
+    ).toThrow('arrow with an invalid attachment')
+  })
+
   it('rejects duplicate ids', () => {
     expect(() => parseBoardFile(envelope([rect, { ...text, id: rect.id }]))).toThrow(
       'same id',

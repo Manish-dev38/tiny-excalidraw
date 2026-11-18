@@ -40,10 +40,19 @@ export interface RectLikeElement extends BaseElement {
   height: number
 }
 
+/** Persisted attachment of an arrow end to a box shape. */
+export interface ArrowBinding {
+  shapeId: string
+}
+
 export interface ArrowElement extends BaseElement {
   type: 'arrow'
   /** Start and end points. */
   points: [Point, Point]
+  /** Shape the start end follows, if any. */
+  startBinding?: ArrowBinding
+  /** Shape the end end follows, if any. */
+  endBinding?: ArrowBinding
 }
 
 export interface TextElement extends BaseElement {

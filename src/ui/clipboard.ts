@@ -1,4 +1,5 @@
 import type { ExcalidrawElement } from '../core/types'
+import { remapArrowBindings } from '../core/binding'
 import { translateElement } from './select'
 
 /**
@@ -62,7 +63,8 @@ export const clipboard = createClipboardStore(safeLocalStorage())
 
 /**
  * Deep-clones elements with fresh ids and a positional offset. The source
- * elements are never mutated.
+ * elements are never mutated. Arrow attachments are remapped to cloned shapes;
+ * attachments to shapes outside the copied set are dropped.
  */
 export function cloneElements(
   elements: ExcalidrawElement[],
@@ -70,5 +72,10 @@ export function cloneElements(
   dx: number,
   dy: number,
 ): ExcalidrawElement[] {
-  return elements.map((el, i) => translateElement({ ...el, id: idFor(i) }, { dx, dy }))
+  const idMap = new Map<string, string>()
+  elements.forEach((el, i) => idMap.set(el.id, idFor(i)))
+  return elements.map((el) => {
+    const clone = translateElement({ ...el, id: idMap.get(el.id)! }, { dx, dy })
+    return clone.type === 'arrow' ? remapArrowBindings(clone, idMap) : clone
+  })
 }

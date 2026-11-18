@@ -17,7 +17,11 @@ export function addElement(scene: Scene, element: ExcalidrawElement): Scene {
   return { elements: [...scene.elements, element] }
 }
 
-/** Patches an element by id, returning a new scene. No-op for unknown ids. */
+/**
+ * Patches an element by id, returning a new scene. No-op for unknown ids.
+ * A patch value of `undefined` removes that property, which is how optional
+ * fields (like arrow bindings) are detached.
+ */
 export function updateElement(
   scene: Scene,
   id: string,
@@ -26,7 +30,14 @@ export function updateElement(
   const index = scene.elements.findIndex((e) => e.id === id)
   if (index === -1) return scene
   const next = [...scene.elements]
-  next[index] = { ...next[index], ...patch } as ExcalidrawElement
+  const merged: Record<string, unknown> = {
+    ...(next[index] as unknown as Record<string, unknown>),
+  }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete merged[key]
+    else merged[key] = value
+  }
+  next[index] = merged as unknown as ExcalidrawElement
   return { elements: next }
 }
 
