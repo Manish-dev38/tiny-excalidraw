@@ -19,6 +19,7 @@ import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
 import { eraserHitTest } from './eraser'
+import { clipboard, cloneElements } from './clipboard'
 import { makeArrowElement, makeEllipseElement, makePenElement, makeRectElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
@@ -106,6 +107,8 @@ export class CanvasApp {
   private finishText: ((keep: boolean) => void) | null = null
   private fileName: string
   private fileInput: HTMLInputElement
+  /** How many times the same clipboard has been pasted; fans out the offset. */
+  private pasteCount = 0
 
   constructor(private mount: CanvasMount) {
     this.container = document.createElement('div')
@@ -508,6 +511,32 @@ export class CanvasApp {
         this.selectTool('select')
         return
       }
+      // Clipboard shortcuts skip text fields (dialogs keep native behaviour).
+      const target = e.target as HTMLElement | null
+      const inTextfield =
+        !!target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
+        if (this.copySelection()) e.preventDefault()
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x') {
+        if (this.copySelection()) {
+          e.preventDefault()
+          this.removeSelected()
+        }
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        this.pasteClipboard()
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        this.duplicateSelection()
+        return
+      }
       if (e.code === 'Space') {
         this.spaceDown = true
         e.preventDefault()
@@ -813,6 +842,44 @@ export class CanvasApp {
     this.history = record(this.history, op)
     this.broadcastOp(op)
     this.selectedIds = []
+    this.afterChange()
+  }
+
+  /** Copies the selection to the internal clipboard. Returns false if empty. */
+  private copySelection(): boolean {
+    const els = this.selectedElements()
+    if (els.length === 0) return false
+    clipboard.write(els)
+    this.pasteCount = 0
+    return true
+  }
+
+  /** Pastes clipboard contents with a cumulative offset so copies fan out. */
+  private pasteClipboard() {
+    const source = clipboard.read()
+    if (source.length === 0) return
+    this.pasteCount += 1
+    const offset = 20 * this.pasteCount
+    this.insertElements(cloneElements(source, () => genId(), offset, offset))
+  }
+
+  /** Duplicates the current selection right next to it. */
+  private duplicateSelection() {
+    const els = this.selectedElements()
+    if (els.length === 0) return
+    this.insertElements(cloneElements(els, () => genId(), 20, 20))
+  }
+
+  /** Inserts elements as one undoable step and selects them. */
+  private insertElements(els: import('../core/types').ExcalidrawElement[]) {
+    const ops: Op[] = els.map((el): Op => ({ type: 'add', element: el }))
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    this.selectedIds = els.map((el) => el.id)
+    this.tool = 'select'
+    this.updateCursor()
     this.afterChange()
   }
 
