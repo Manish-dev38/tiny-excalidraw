@@ -18,10 +18,11 @@ import { confirmReplaceBoard, showImportError, showSaveAsDialog } from './dialog
 import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
+import type { RectLikeType } from '../core/types'
 import { eraserHitTest } from './eraser'
 import { clipboard, cloneElements } from './clipboard'
 import { textEditOp } from './textEdit'
-import { makeArrowElement, makeEllipseElement, makePenElement, makeRectElement, makeTextElement } from './factories'
+import { makeArrowElement, makePenElement, makeShapeElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
 import type { ClientMessage } from '../collab/protocol'
@@ -57,7 +58,12 @@ function genId(): string {
 
 type Gesture =
   | { kind: 'pen'; points: Point[] }
-  | { kind: 'shape'; type: 'rectangle' | 'ellipse' | 'arrow'; start: Point; current: Point }
+  | {
+      kind: 'shape'
+      type: RectLikeType | 'arrow'
+      start: Point
+      current: Point
+    }
   | { kind: 'eraser'; points: Point[] }
   | { kind: 'pan'; last: Point }
   | { kind: 'marquee'; start: Point; current: Point }
@@ -705,6 +711,11 @@ export class CanvasApp {
         break
       case 'rectangle':
       case 'ellipse':
+      case 'laptop':
+      case 'database':
+      case 'server':
+      case 'cloud':
+      case 'user':
       case 'arrow':
         this.gesture = { kind: 'shape', type: this.tool, start: p, current: p }
         break
@@ -784,11 +795,9 @@ export class CanvasApp {
     } else if (g.kind === 'shape') {
       if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
         const el =
-          g.type === 'rectangle'
-            ? makeRectElement(genId(), g.start, g.current, this.style)
-            : g.type === 'ellipse'
-              ? makeEllipseElement(genId(), g.start, g.current, this.style)
-              : makeArrowElement(genId(), g.start, g.current, this.style)
+          g.type === 'arrow'
+            ? makeArrowElement(genId(), g.start, g.current, this.style)
+            : makeShapeElement(genId(), g.type, g.start, g.current, this.style)
         this.commitCreated(el)
       }
     } else if (g.kind === 'eraser') {

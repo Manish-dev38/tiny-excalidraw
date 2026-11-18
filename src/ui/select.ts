@@ -15,7 +15,15 @@ export function acceptsStyle(
     case 'strokeWidth':
       return type !== 'text'
     case 'background':
-      return type === 'rectangle' || type === 'ellipse'
+      return (
+        type === 'rectangle' ||
+        type === 'ellipse' ||
+        type === 'laptop' ||
+        type === 'database' ||
+        type === 'server' ||
+        type === 'cloud' ||
+        type === 'user'
+      )
   }
 }
 
@@ -26,6 +34,11 @@ export function acceptsStyle(
 export function hitTestElement(el: ExcalidrawElement, p: Point, tolerance = 8): boolean {
   switch (el.type) {
     case 'rectangle':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
       return rectContainsPoint(el.x, el.y, el.width, el.height, p.x, p.y)
     case 'ellipse': {
       // Ellipse test centered on the element bounds.

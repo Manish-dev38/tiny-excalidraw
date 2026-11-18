@@ -65,4 +65,32 @@ describe('toSVG', () => {
     expect(svg).toContain('<text')
     expect(svg).toContain('a &lt; b &amp; c')
   })
+
+  it('renders every infrastructure shape as SVG geometry', () => {
+    const svgFor = (type: 'laptop' | 'database' | 'server' | 'cloud' | 'user') =>
+      toSVG(
+        addElement(createScene(), {
+          id: type,
+          type,
+          x: 0,
+          y: 0,
+          width: 80,
+          height: 80,
+          strokeColor: '#333',
+          background: '#a5d8ff',
+          strokeWidth: 2,
+        }),
+      )
+    expect(svgFor('laptop')).toContain('<path')
+    expect(svgFor('database')).toContain('<ellipse')
+    expect(svgFor('server')).toContain('<line')
+    expect(svgFor('cloud')).toContain('<path')
+    expect(svgFor('user')).toContain('<ellipse')
+    for (const type of ['laptop', 'database', 'server', 'cloud', 'user'] as const) {
+      const svg = svgFor(type)
+      expect(svg).toContain('stroke="#333"')
+      expect(svg).toContain('#a5d8ff')
+      expect(svg).not.toContain('NaN')
+    }
+  })
 })

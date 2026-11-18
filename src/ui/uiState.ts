@@ -19,7 +19,7 @@ export const TOOL_GROUPS: readonly (readonly UiTool[])[] = [
   ['pen', 'text', 'eraser'],
 ]
 
-export const TOOL_SHORTCUTS: Record<UiTool, string> = {
+export const TOOL_SHORTCUTS: Partial<Record<UiTool, string>> = {
   hand: 'H',
   select: 'V',
   rectangle: 'R',
@@ -31,7 +31,9 @@ export const TOOL_SHORTCUTS: Record<UiTool, string> = {
 }
 
 export const SHORTCUT_TO_TOOL: Record<string, UiTool> = Object.fromEntries(
-  Object.entries(TOOL_SHORTCUTS).map(([tool, key]) => [key.toLowerCase(), tool as UiTool]),
+  Object.entries(TOOL_SHORTCUTS)
+    .filter((entry): entry is [string, string] => !!entry[1])
+    .map(([tool, key]) => [key.toLowerCase(), tool as UiTool]),
 )
 
 /**
@@ -48,6 +50,11 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
         return ['stroke']
       case 'rectangle':
       case 'ellipse':
+      case 'laptop':
+      case 'database':
+      case 'server':
+      case 'cloud':
+      case 'user':
         return ['stroke', 'background', 'strokeWidth']
     }
   }
@@ -58,6 +65,11 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
       return ['stroke', 'strokeWidth']
     case 'rectangle':
     case 'ellipse':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
       return ['stroke', 'background', 'strokeWidth']
     default:
       return []
@@ -99,6 +111,11 @@ export function hintFor(tool: UiTool, selection: ExcalidrawElement | null): stri
     case 'rectangle':
     case 'ellipse':
     case 'arrow':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
       return 'Click and drag, release when you’re finished'
     case 'pen':
       return 'Click and drag to draw'

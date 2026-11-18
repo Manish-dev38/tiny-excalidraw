@@ -86,7 +86,7 @@ describe('tool metadata', () => {
   it('gives every tool a shortcut and maps the shortcut back', () => {
     const tools = TOOL_GROUPS.flat()
     for (const tool of tools) {
-      const key = TOOL_SHORTCUTS[tool]
+      const key = TOOL_SHORTCUTS[tool]!
       expect(key).toHaveLength(1)
       expect(SHORTCUT_TO_TOOL[key.toLowerCase()]).toBe(tool)
     }

@@ -2,13 +2,26 @@ import type { Scene } from './scene'
 import type { ElementType, ExcalidrawElement, Point } from './types'
 
 export const BOARD_FORMAT = 'tiny-excalidraw'
-export const BOARD_VERSION = 1
+/** v2 adds infrastructure shapes. v1 files still import (same element model). */
+export const BOARD_VERSION = 2
+const SUPPORTED_VERSIONS = [1, 2]
 export const MAX_FILE_BYTES = 5 * 1024 * 1024
 export const MAX_ELEMENTS = 10_000
 export const MAX_POINTS = 50_000
 export const MAX_TEXT_LENGTH = 100_000
 
-const ELEMENT_TYPES: ElementType[] = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
+const ELEMENT_TYPES: ElementType[] = [
+  'pen',
+  'rectangle',
+  'ellipse',
+  'laptop',
+  'database',
+  'server',
+  'cloud',
+  'user',
+  'arrow',
+  'text',
+]
 
 export class BoardFileError extends Error {
   constructor(message: string) {
@@ -27,7 +40,7 @@ export interface ParsedBoardFile {
 
 export interface BoardFile {
   format: typeof BOARD_FORMAT
-  version: typeof BOARD_VERSION
+  version: number
   savedAt: string
   roomId: string
   scene: Scene
@@ -152,6 +165,11 @@ function validateElement(value: unknown): ExcalidrawElement {
     }
     case 'rectangle':
     case 'ellipse':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
       if (!isFiniteNumber(value.width) || !isFiniteNumber(value.height)) {
         throw new BoardFileError('This board contains a shape with invalid size.')
       }
@@ -215,7 +233,7 @@ export function parseBoardFile(raw: string): ParsedBoardFile {
     if (parsed.format !== BOARD_FORMAT) {
       throw new BoardFileError("This isn't a Tiny Excalidraw board file.")
     }
-    if (parsed.version !== BOARD_VERSION) {
+    if (typeof parsed.version !== 'number' || !SUPPORTED_VERSIONS.includes(parsed.version)) {
       if (typeof parsed.version === 'number' && parsed.version > BOARD_VERSION) {
         throw new BoardFileError('This board was created by a newer version of the app.')
       }

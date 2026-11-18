@@ -5,7 +5,18 @@ export function serializeScene(scene: Scene): string {
   return JSON.stringify(scene)
 }
 
-const ELEMENT_TYPES: ElementType[] = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
+const ELEMENT_TYPES: ElementType[] = [
+  'pen',
+  'rectangle',
+  'ellipse',
+  'laptop',
+  'database',
+  'server',
+  'cloud',
+  'user',
+  'arrow',
+  'text',
+]
 
 function isElement(value: unknown): value is ExcalidrawElement {
   if (typeof value !== 'object' || value === null) return false

@@ -35,6 +35,11 @@ describe('hitTestElement', () => {
   it('misses a point outside the rectangle', () => {
     expect(hitTestElement(rect('a', 0, 0), { x: 12, y: 5 })).toBe(false)
   })
+  it('hits infrastructure shapes by their box', () => {
+    const laptop: ExcalidrawElement = { ...rect('a', 0, 0), type: 'laptop' } as ExcalidrawElement
+    expect(hitTestElement(laptop, { x: 5, y: 5 })).toBe(true)
+    expect(hitTestElement(laptop, { x: 15, y: 5 })).toBe(false)
+  })
   it('hits a pen stroke near one of its points', () => {
     const p = pen('a', [
       { x: 0, y: 0 },

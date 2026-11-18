@@ -83,6 +83,11 @@ export function bboxOf(el: ExcalidrawElement): BBox {
     }
     case 'rectangle':
     case 'ellipse':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
       minX = el.x
       minY = el.y
       maxX = el.x + el.width

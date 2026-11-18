@@ -30,6 +30,15 @@ describe('dist', () => {
   })
 })
 
+describe('bboxOf infrastructure shapes', () => {
+  it('uses the element box plus half the stroke', () => {
+    for (const type of ['laptop', 'database', 'server', 'cloud', 'user'] as const) {
+      const b = bboxOf(rect({ type, width: 40, height: 30 }) as ExcalidrawElement)
+      expect(b).toEqual({ minX: -0.5, minY: -0.5, maxX: 40.5, maxY: 30.5 })
+    }
+  })
+})
+
 describe('rectContainsPoint', () => {
   it('contains interior points', () => {
     expect(rectContainsPoint(0, 0, 10, 10, 5, 5)).toBe(true)
