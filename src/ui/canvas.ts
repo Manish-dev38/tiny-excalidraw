@@ -18,8 +18,18 @@ import { confirmReplaceBoard, showImportError, showSaveAsDialog } from './dialog
 import { createAutosave, type Autosave, type AutosaveState } from './autosave'
 import { bboxOf } from '../core/geometry'
 import type { Point } from '../core/types'
+import type { RectLikeType } from '../core/types'
 import { eraserHitTest } from './eraser'
-import { makeArrowElement, makeEllipseElement, makePenElement, makeRectElement, makeTextElement } from './factories'
+import { clipboard, cloneElements } from './clipboard'
+import { textEditOp } from './textEdit'
+import {
+  bindArrowEnds,
+  clearArrowBindings,
+  detachRemoved,
+  isBoxShape,
+  resnapArrow,
+} from '../core/binding'
+import { makeArrowElement, makePenElement, makeShapeElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
 import type { ClientMessage } from '../collab/protocol'
@@ -42,8 +52,9 @@ import type { Theme } from './palette'
 import type { BoardRepository } from './storage'
 import { screenToScene, sceneToScreen, zoomAt, panBy } from './viewport'
 import type { Viewport } from './viewport'
-import { hitTestTop, translateElement } from './select'
+import { hitTestTop, translateElement, acceptsStyle, elementsInRect } from './select'
 import type { ExcalidrawElement } from '../core/types'
+import type { ArrowElement, RectLikeElement, TextElement } from '../core/types'
 import { assignColor, availablePeers, formatName } from './participants'
 
 const MIN_DRAG = 2
@@ -54,14 +65,21 @@ function genId(): string {
 
 type Gesture =
   | { kind: 'pen'; points: Point[] }
-  | { kind: 'shape'; type: 'rectangle' | 'ellipse' | 'arrow'; start: Point; current: Point }
+  | {
+      kind: 'shape'
+      type: RectLikeType | 'arrow'
+      start: Point
+      current: Point
+    }
   | { kind: 'eraser'; points: Point[] }
   | { kind: 'pan'; last: Point }
+  | { kind: 'marquee'; start: Point; current: Point }
   | {
       kind: 'move'
-      id: string
-      /** The element as it was when the move started. */
-      original: ExcalidrawElement
+      /** One entry per selected element, as they were when the move started. */
+      items: { id: string; original: ExcalidrawElement }[]
+      /** Arrows attached to a moved shape, snapped live during the drag. */
+      attached: { id: string; original: ArrowElement }[]
       startScene: Point
       lastScene: Point
       moved: boolean
@@ -85,13 +103,19 @@ export class CanvasApp {
   private viewport: Viewport = { x: 40, y: 40, zoom: 1 }
   private tool: UiTool = 'select'
   private panelMode: PanelMode = 'auto'
-  private style: DrawStyle = { strokeColor: '#1e1e1e', background: 'transparent', strokeWidth: 2 }
+  private style: DrawStyle = {
+    strokeColor: '#1e1e1e',
+    background: 'transparent',
+    strokeWidth: 2,
+    dashed: false,
+  }
   private theme: Theme = 'light'
   private gesture: Gesture = null
   private spaceDown = false
   private peer: PeerSession
   private remoteCursor: { x: number; y: number; name: string; color: string } | null = null
-  private selectedId: string | null = null
+  /** Ordered selection; the last id is the primary element for panel values. */
+  private selectedIds: string[] = []
   private selfName = availablePeers()
   private abort: AbortController = new AbortController()
   private ro: ResizeObserver | null = null
@@ -105,6 +129,8 @@ export class CanvasApp {
   private finishText: ((keep: boolean) => void) | null = null
   private fileName: string
   private fileInput: HTMLInputElement
+  /** How many times the same clipboard has been pasted; fans out the offset. */
+  private pasteCount = 0
 
   constructor(private mount: CanvasMount) {
     this.container = document.createElement('div')
@@ -129,6 +155,7 @@ export class CanvasApp {
       onStrokeColor: (color) => this.setStyle({ strokeColor: color }),
       onBackground: (color) => this.setStyle({ background: color }),
       onStrokeWidth: (width) => this.setStyle({ strokeWidth: width }),
+      onDashed: (dashed) => this.setStyle({ dashed }),
     })
     this.panelUpdate = panel.update
 
@@ -259,8 +286,15 @@ export class CanvasApp {
   }
 
   private selectedElement(): ExcalidrawElement | null {
-    if (!this.selectedId) return null
-    return getElement(this.scene, this.selectedId) ?? null
+    const id = this.selectedIds[this.selectedIds.length - 1]
+    if (!id) return null
+    return getElement(this.scene, id) ?? null
+  }
+
+  private selectedElements(): ExcalidrawElement[] {
+    return this.selectedIds
+      .map((id) => getElement(this.scene, id))
+      .filter((el): el is ExcalidrawElement => !!el)
   }
 
   private panelState(): PropertiesState {
@@ -274,6 +308,7 @@ export class CanvasApp {
             strokeColor: selection.strokeColor,
             background: selection.background,
             strokeWidth: selection.strokeWidth,
+            dashed: selection.dashed ?? false,
           }
         : { ...this.style },
     }
@@ -304,7 +339,7 @@ export class CanvasApp {
 
   private selectTool(tool: UiTool) {
     this.tool = tool
-    if (tool !== 'select') this.selectedId = null
+    if (tool !== 'select') this.selectedIds = []
     // Keep an explicit hamburger pin; `auto` continues to follow the tool.
     this.updateCursor()
     this.syncUi()
@@ -317,13 +352,22 @@ export class CanvasApp {
 
   private setStyle(patch: Partial<StyleValues>) {
     this.style = { ...this.style, ...patch }
-    const selection = this.selectedElement()
-    if (!selection) {
+    const selection = this.selectedElements()
+    if (selection.length === 0) {
       this.render()
       this.syncUi()
       return
     }
-    const op: Op = { type: 'update', id: selection.id, prev: { ...selection }, next: patch }
+    const key = Object.keys(patch)[0] as keyof StyleValues
+    const ops: Op[] = selection
+      .filter((el) => acceptsStyle(el.type, key))
+      .map((el): Op => ({ type: 'update', id: el.id, prev: { ...el }, next: patch }))
+    if (ops.length === 0) {
+      this.render()
+      this.syncUi()
+      return
+    }
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
     this.broadcastOp(op)
@@ -370,7 +414,7 @@ export class CanvasApp {
     }
     if (this.gesture) this.drawGesture(this.gesture)
     if (this.remoteCursor) this.drawCursor()
-    if (this.selectedId) this.drawSelection()
+    if (this.selectedIds.length > 0) this.drawSelection()
   }
 
   private drawGesture(g: NonNullable<Gesture>) {
@@ -380,6 +424,22 @@ export class CanvasApp {
       renderShape(this.ctx, g.type, g.start, g.current, this.style)
     } else if (g.kind === 'eraser') {
       renderPath(this.ctx, g.points, { strokeColor: '#868e96', strokeWidth: 8 })
+    } else if (g.kind === 'marquee') {
+      const zoom = this.viewport.zoom
+      const x = Math.min(g.start.x, g.current.x)
+      const y = Math.min(g.start.y, g.current.y)
+      const w = Math.abs(g.current.x - g.start.x)
+      const h = Math.abs(g.current.y - g.start.y)
+      this.ctx.save()
+      this.ctx.strokeStyle = '#1971c2'
+      this.ctx.fillStyle = 'rgba(25, 113, 194, 0.05)'
+      this.ctx.lineWidth = 1 / zoom
+      this.ctx.setLineDash([4 / zoom, 3 / zoom])
+      this.ctx.beginPath()
+      this.ctx.rect(x, y, w, h)
+      this.ctx.fill()
+      this.ctx.stroke()
+      this.ctx.restore()
     }
   }
 
@@ -417,24 +477,24 @@ export class CanvasApp {
   }
 
   private drawSelection() {
-    const el = getElement(this.scene, this.selectedId!)
-    if (!el) return
-    const b = bboxOf(el)
-    const pad = 4
-    this.ctx.save()
-    this.ctx.strokeStyle = '#1971c2'
-    this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
-    this.ctx.lineWidth = 1 / this.viewport.zoom
-    this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
-    const x = b.minX - pad
-    const y = b.minY - pad
-    const w = b.maxX - b.minX + pad * 2
-    const h = b.maxY - b.minY + pad * 2
-    this.ctx.beginPath()
-    this.ctx.rect(x, y, w, h)
-    this.ctx.fill()
-    this.ctx.stroke()
-    this.ctx.restore()
+    for (const el of this.selectedElements()) {
+      const b = bboxOf(el)
+      const pad = 4
+      this.ctx.save()
+      this.ctx.strokeStyle = '#1971c2'
+      this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
+      this.ctx.lineWidth = 1 / this.viewport.zoom
+      this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
+      const x = b.minX - pad
+      const y = b.minY - pad
+      const w = b.maxX - b.minX + pad * 2
+      const h = b.maxY - b.minY + pad * 2
+      this.ctx.beginPath()
+      this.ctx.rect(x, y, w, h)
+      this.ctx.fill()
+      this.ctx.stroke()
+      this.ctx.restore()
+    }
   }
 
   private bindEvents() {
@@ -443,6 +503,14 @@ export class CanvasApp {
     c.addEventListener('pointermove', (e) => this.onPointerMove(e))
     c.addEventListener('pointerup', () => this.onPointerUp())
     c.addEventListener('pointercancel', () => this.onPointerUp())
+    c.addEventListener('dblclick', (e) => {
+      if (this.isEditingText()) return
+      const hit = hitTestTop(this.scene.elements, this.toScene(e))
+      if (hit?.type === 'text') {
+        e.preventDefault()
+        this.beginText({ x: hit.x, y: hit.y }, hit)
+      }
+    })
     c.addEventListener('wheel', (e) => {
       e.preventDefault()
       const d = e.ctrlKey ? Math.exp(-e.deltaY * 0.004) : Math.exp(-e.deltaY * 0.0015)
@@ -459,6 +527,10 @@ export class CanvasApp {
         return
       }
       if (this.isEditingText()) return
+      const target = e.target as HTMLElement | null
+      const inTextfield =
+        !!target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) this.redo()
@@ -471,8 +543,38 @@ export class CanvasApp {
         return
       }
       if (e.key === 'Escape') {
-        this.selectedId = null
+        this.selectedIds = []
         this.selectTool('select')
+        return
+      }
+      if (!inTextfield && e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const el = this.selectedElement()
+        if (el?.type === 'text') {
+          e.preventDefault()
+          this.beginText({ x: el.x, y: el.y }, el)
+          return
+        }
+      }
+      // Clipboard shortcuts skip text fields (dialogs keep native behaviour).
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
+        if (this.copySelection()) e.preventDefault()
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x') {
+        if (this.copySelection()) {
+          e.preventDefault()
+          this.removeSelected()
+        }
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        this.pasteClipboard()
+        return
+      }
+      if (!inTextfield && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        this.duplicateSelection()
         return
       }
       if (e.code === 'Space') {
@@ -480,10 +582,9 @@ export class CanvasApp {
         e.preventDefault()
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedIds.length > 0) {
         e.preventDefault()
-        this.commitRemove(this.selectedId)
-        this.selectedId = null
+        this.removeSelected()
         this.syncUi()
         return
       }
@@ -556,7 +657,7 @@ export class CanvasApp {
 
     this.scene = parsed.scene
     this.history = createHistory()
-    this.selectedId = null
+    this.selectedIds = []
     this.fileName = fileNameFromSource(
       file.name,
       defaultFileName(this.mount.roomId),
@@ -584,17 +685,38 @@ export class CanvasApp {
     if (this.tool === 'select') {
       const hit = hitTestTop(this.scene.elements, p)
       if (hit) {
-        this.selectedId = hit.id
+        if (e.shiftKey) {
+          // Shift-click toggles membership; no move gesture on a toggle.
+          this.selectedIds = this.selectedIds.includes(hit.id)
+            ? this.selectedIds.filter((id) => id !== hit.id)
+            : [...this.selectedIds, hit.id]
+          this.syncUi()
+          this.render()
+          this.canvas.setPointerCapture(e.pointerId)
+          return
+        }
+        if (!this.selectedIds.includes(hit.id)) {
+          this.selectedIds = [hit.id]
+        }
+        const items = this.selectedElements().map((el) => ({ id: el.id, original: el }))
+        const attached = this.attachedArrowsTo(items)
         this.gesture = {
           kind: 'move',
-          id: hit.id,
-          original: hit,
+          items,
+          attached,
           startScene: p,
           lastScene: p,
           moved: false,
         }
+      } else if (e.shiftKey) {
+        // Shift-click on empty canvas keeps the current selection.
+        this.syncUi()
+        this.render()
+        this.canvas.setPointerCapture(e.pointerId)
+        return
       } else {
-        this.selectedId = null
+        this.selectedIds = []
+        this.gesture = { kind: 'marquee', start: p, current: p }
       }
       this.syncUi()
       this.render()
@@ -607,6 +729,11 @@ export class CanvasApp {
         break
       case 'rectangle':
       case 'ellipse':
+      case 'laptop':
+      case 'database':
+      case 'server':
+      case 'cloud':
+      case 'user':
       case 'arrow':
         this.gesture = { kind: 'shape', type: this.tool, start: p, current: p }
         break
@@ -655,14 +782,25 @@ export class CanvasApp {
       this.gesture.current = p
     } else if (this.gesture.kind === 'eraser') {
       this.gesture.points.push(p)
+    } else if (this.gesture.kind === 'marquee') {
+      this.gesture.current = p
     } else if (this.gesture.kind === 'move') {
       const g = this.gesture
       const dx = p.x - g.startScene.x
       const dy = p.y - g.startScene.y
       if (Math.hypot(dx, dy) >= MIN_DRAG) g.moved = true
       if (g.moved) {
-        const moved = translateElement(g.original, { dx, dy })
-        this.scene = updateElement(this.scene, g.id, moved as Partial<ExcalidrawElement>)
+        const movedShapes = new Map<string, RectLikeElement>()
+        for (const { id, original } of g.items) {
+          const moved = translateElement(original, { dx, dy })
+          this.scene = updateElement(this.scene, id, moved as Partial<ExcalidrawElement>)
+          if (isBoxShape(moved)) movedShapes.set(id, moved)
+        }
+        // Arrows attached to a moved shape follow it live.
+        for (const { id, original } of g.attached) {
+          const snapped = resnapArrow(original, movedShapes) ?? original
+          this.scene = updateElement(this.scene, id, snapped as Partial<ExcalidrawElement>)
+        }
       }
       g.lastScene = p
     }
@@ -677,34 +815,57 @@ export class CanvasApp {
     if (g.kind === 'pan') return
     if (g.kind === 'pen') {
       if (g.points.length > 1) {
-        this.commitAdd(makePenElement(genId(), g.points, this.style))
+        this.commitCreated(makePenElement(genId(), g.points, this.style))
       }
     } else if (g.kind === 'shape') {
       if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
         const el =
-          g.type === 'rectangle'
-            ? makeRectElement(genId(), g.start, g.current, this.style)
-            : g.type === 'ellipse'
-              ? makeEllipseElement(genId(), g.start, g.current, this.style)
-              : makeArrowElement(genId(), g.start, g.current, this.style)
-        this.commitAdd(el)
+          g.type === 'arrow'
+            ? bindArrowEnds(
+                makeArrowElement(genId(), g.start, g.current, this.style),
+                this.scene.elements,
+              )
+            : makeShapeElement(genId(), g.type, g.start, g.current, this.style)
+        this.commitCreated(el)
       }
     } else if (g.kind === 'eraser') {
       if (g.points.length > 0) {
         const ids = eraserHitTest(this.scene, g.points, 8)
         for (const id of ids) this.commitRemove(id)
       }
+    } else if (g.kind === 'marquee') {
+      if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
+        const hits = elementsInRect(this.scene.elements, g.start, g.current)
+        this.selectedIds = hits.map((el) => el.id)
+        this.syncUi()
+      }
     } else if (g.kind === 'move') {
       if (g.moved) {
         const dx = g.lastScene.x - g.startScene.x
         const dy = g.lastScene.y - g.startScene.y
-        const next = translateElement(g.original, { dx, dy })
-        const op: Op = {
-          type: 'update',
-          id: g.id,
-          prev: g.original,
-          next: next as Partial<ExcalidrawElement>,
+        const ops: Op[] = g.items.map(({ id, original }): Op => {
+          const moved = translateElement(original, { dx, dy })
+          // Moving an arrow itself detaches it from any shape.
+          const next = moved.type === 'arrow' ? clearArrowBindings(moved) : moved
+          return {
+            type: 'update',
+            id,
+            prev: original,
+            next: next.type === 'arrow' ? this.arrowPatch(next) : next,
+          }
+        })
+        // Attached arrows that followed the moved shapes are part of the step.
+        for (const { id, original } of g.attached) {
+          const final = getElement(this.scene, id)
+          if (!final || final === original) continue
+          ops.push({
+            type: 'update',
+            id,
+            prev: original,
+            next: final as Partial<ExcalidrawElement>,
+          })
         }
+        const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
         this.scene = applyOp(this.scene, op)
         this.history = record(this.history, op)
         this.broadcastOp(op)
@@ -722,20 +883,149 @@ export class CanvasApp {
     this.afterChange()
   }
 
+  /**
+   * Commits a freshly drawn element and selects it, switching to the select
+   * tool. Style changes in the properties panel then apply to the shape just
+   * drawn instead of silently only affecting future shapes.
+   */
+  private commitCreated(element: import('../core/types').ExcalidrawElement) {
+    this.selectedIds = [element.id]
+    this.tool = 'select'
+    this.updateCursor()
+    this.commitAdd(element)
+  }
+
   private commitRemove(id: string) {
     const el = getElement(this.scene, id)
     if (!el) return
-    const op: Op = { type: 'remove', element: el }
+    const ops: Op[] = [
+      { type: 'remove', element: el },
+      ...this.detachArrowsFor(new Set([id])),
+    ]
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
-    this.peer.send({ type: 'remove', id })
+    this.broadcastOp(op)
+    this.afterChange()
+  }
+
+  /** Removes the whole selection as one undoable step. */
+  private removeSelected() {
+    const els = this.selectedElements()
+    if (els.length === 0) return
+    const ids = new Set(els.map((el) => el.id))
+    const ops: Op[] = [
+      ...els.map((el): Op => ({ type: 'remove', element: el })),
+      ...this.detachArrowsFor(ids),
+    ]
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    this.selectedIds = []
+    this.afterChange()
+  }
+
+  /** Arrows not being removed that point at one of the removed shapes. */
+  private detachArrowsFor(removedIds: ReadonlySet<string>): Op[] {
+    const ops: Op[] = []
+    for (const el of this.scene.elements) {
+      if (el.type !== 'arrow' || removedIds.has(el.id)) continue
+      const next = detachRemoved(el, removedIds)
+      if (next) {
+        ops.push({
+          type: 'update',
+          id: el.id,
+          prev: el,
+          next: this.arrowPatch(next),
+        })
+      }
+    }
+    return ops
+  }
+
+  /**
+   * Patch for an arrow update. Absent binding keys are written explicitly as
+   * `undefined` so `updateElement` removes them (merge alone cannot).
+   */
+  private arrowPatch(arrow: ArrowElement): Partial<ExcalidrawElement> {
+    return { ...arrow, startBinding: arrow.startBinding, endBinding: arrow.endBinding }
+  }
+
+  /** Snapshot of arrows bound to a shape in the current move selection. */
+  private attachedArrowsTo(
+    items: { id: string; original: ExcalidrawElement }[],
+  ): { id: string; original: ArrowElement }[] {
+    const movingShapeIds = new Set(
+      items.filter((it) => isBoxShape(it.original)).map((it) => it.id),
+    )
+    if (movingShapeIds.size === 0) return []
+    const movingIds = new Set(items.map((it) => it.id))
+    return this.scene.elements
+      .filter(
+        (el): el is ArrowElement =>
+          el.type === 'arrow' &&
+          !movingIds.has(el.id) &&
+          ((!!el.startBinding && movingShapeIds.has(el.startBinding.shapeId)) ||
+            (!!el.endBinding && movingShapeIds.has(el.endBinding.shapeId))),
+      )
+      .map((el) => ({ id: el.id, original: el }))
+  }
+
+  /** Copies the selection to the internal clipboard. Returns false if empty. */
+  private copySelection(): boolean {
+    const els = this.selectedElements()
+    if (els.length === 0) return false
+    clipboard.write(els)
+    this.pasteCount = 0
+    return true
+  }
+
+  /** Pastes clipboard contents with a cumulative offset so copies fan out. */
+  private pasteClipboard() {
+    const source = clipboard.read()
+    if (source.length === 0) return
+    this.pasteCount += 1
+    const offset = 20 * this.pasteCount
+    this.insertElements(cloneElements(source, () => genId(), offset, offset))
+  }
+
+  /** Duplicates the current selection right next to it. */
+  private duplicateSelection() {
+    const els = this.selectedElements()
+    if (els.length === 0) return
+    this.insertElements(cloneElements(els, () => genId(), 20, 20))
+  }
+
+  /** Inserts elements as one undoable step and selects them. */
+  private insertElements(els: import('../core/types').ExcalidrawElement[]) {
+    const ops: Op[] = els.map((el): Op => ({ type: 'add', element: el }))
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    this.selectedIds = els.map((el) => el.id)
+    this.tool = 'select'
+    this.updateCursor()
     this.afterChange()
   }
 
   private broadcastOp(op: Op) {
-    if (op.type === 'add') this.peer.send({ type: 'add', element: op.element })
-    else if (op.type === 'remove') this.peer.send({ type: 'remove', id: op.element.id })
-    else this.peer.send({ type: 'update', id: op.id, patch: op.next })
+    if (op.type === 'batch') {
+      for (const child of op.ops) this.broadcastOp(child)
+    } else if (op.type === 'add') {
+      this.peer.send({ type: 'add', element: op.element })
+    } else if (op.type === 'remove') {
+      this.peer.send({ type: 'remove', id: op.element.id })
+    } else {
+      // JSON drops undefined keys, so removals travel as null and are
+      // converted back in `handleRemote`.
+      const patch: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(op.next)) {
+        patch[key] = value === undefined ? null : value
+      }
+      this.peer.send({ type: 'update', id: op.id, patch: patch as Partial<ExcalidrawElement> })
+    }
   }
 
   private undo() {
@@ -769,9 +1059,15 @@ export class CanvasApp {
           this.scene = addElement(this.scene, msg.element)
         }
         break
-      case 'update':
-        this.scene = updateElement(this.scene, msg.id, msg.patch)
+      case 'update': {
+        // `null` means "remove this optional property" (see broadcastOp).
+        const patch: Record<string, unknown> = { ...msg.patch }
+        for (const key of Object.keys(patch)) {
+          if (patch[key] === null) patch[key] = undefined
+        }
+        this.scene = updateElement(this.scene, msg.id, patch as Partial<ExcalidrawElement>)
         break
+      }
       case 'remove':
         this.scene = removeElement(this.scene, msg.id)
         break
@@ -779,7 +1075,7 @@ export class CanvasApp {
         this.finishText?.(false)
         this.scene = msg.scene
         this.history = createHistory()
-        this.selectedId = null
+        this.selectedIds = []
         break
       case 'cursor': {
         const color = assignColor(String(msg.name ?? 'remote'))
@@ -805,10 +1101,13 @@ export class CanvasApp {
     }
   }
 
-  private beginText(at: Point) {
+  private beginText(at: Point, existing?: TextElement) {
+    // Never stack editors: commit whatever is open first.
+    this.finishText?.(true)
     const rect = this.canvas.getBoundingClientRect()
-    const screen = sceneToScreen(this.viewport, at)
-    const fontSize = 24
+    const anchor = existing ? { x: existing.x, y: existing.y } : at
+    const screen = sceneToScreen(this.viewport, anchor)
+    const fontSize = existing ? existing.fontSize : 24
     const ta = document.createElement('textarea')
     ta.className = 'editing'
     ta.rows = 1
@@ -816,7 +1115,8 @@ export class CanvasApp {
     ta.style.left = `${rect.left + screen.x}px`
     ta.style.top = `${rect.top + screen.y}px`
     ta.style.fontSize = `${fontSize * this.viewport.zoom}px`
-    ta.style.color = this.style.strokeColor
+    ta.style.color = existing ? existing.strokeColor : this.style.strokeColor
+    if (existing) ta.value = existing.text
     this.container.appendChild(ta)
 
     let done = false
@@ -833,13 +1133,14 @@ export class CanvasApp {
       const text = ta.value.trim()
       ta.remove()
       this.syncUi()
+      if (existing) {
+        if (keep) this.commitTextEdit(existing, text)
+        this.render()
+        return
+      }
       if (keep && text) {
         const el = makeTextElement(genId(), at, text, fontSize, this.style)
-        this.selectedId = el.id
-        this.tool = 'select'
-        this.commitAdd(el)
-        this.updateCursor()
-        this.syncUi()
+        this.commitCreated(el)
       }
       this.render()
     }
@@ -864,6 +1165,27 @@ export class CanvasApp {
       if (!done) ta.focus()
     })
     this.syncUi()
+  }
+
+  /** Applies an inline edit to an existing text element. */
+  private commitTextEdit(existing: TextElement, text: string) {
+    this.selectedIds = [existing.id]
+    this.tool = 'select'
+    this.updateCursor()
+    const op = textEditOp(existing, text)
+    if (!op) {
+      this.syncUi()
+      return
+    }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    if (op.type === 'remove') {
+      this.selectedIds = []
+      this.syncUi()
+      return
+    }
+    this.afterChange()
   }
 
   private fitToScene() {

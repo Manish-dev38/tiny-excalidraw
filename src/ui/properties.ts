@@ -6,6 +6,7 @@ export interface StyleValues {
   strokeColor: string
   background: string
   strokeWidth: number
+  dashed: boolean
 }
 
 export interface PropertiesState {
@@ -19,6 +20,7 @@ export interface PropertiesCallbacks {
   onStrokeColor(color: string): void
   onBackground(color: string): void
   onStrokeWidth(width: number): void
+  onDashed(dashed: boolean): void
 }
 
 export const STROKE_WIDTHS = [1, 2, 4]
@@ -105,13 +107,32 @@ export function buildProperties(
     width.body.appendChild(b)
   }
 
+  const lineStyle = group('Line style')
+  lineStyle.body.classList.add('line-row')
+  const dashedButtons: HTMLButtonElement[] = []
+  for (const dashed of [false, true]) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'line-btn'
+    b.title = dashed ? 'Dashed line' : 'Solid line'
+    b.setAttribute('aria-label', dashed ? 'Dashed line' : 'Solid line')
+    b.dataset.dashed = String(dashed)
+    const preview = document.createElement('span')
+    preview.className = dashed ? 'l-line is-dashed' : 'l-line'
+    b.appendChild(preview)
+    b.addEventListener('click', () => cb.onDashed(dashed))
+    dashedButtons.push(b)
+    lineStyle.body.appendChild(b)
+  }
+
   const sections: Record<StyleGroup, HTMLElement> = {
     stroke: stroke.el,
     background: background.el,
     strokeWidth: width.el,
+    lineStyle: lineStyle.el,
   }
 
-  el.append(stroke.el, background.el, width.el)
+  el.append(stroke.el, background.el, width.el, lineStyle.el)
 
   function markActive(buttons: HTMLButtonElement[], key: string, value: string): void {
     for (const b of buttons) {
@@ -131,6 +152,7 @@ export function buildProperties(
     markActive(strokeSwatches, 'color', state.values.strokeColor)
     markActive(backgroundSwatches, 'color', state.values.background)
     markActive(widthButtons, 'width', String(state.values.strokeWidth))
+    markActive(dashedButtons, 'dashed', String(state.values.dashed))
   }
 
   apply(initial)

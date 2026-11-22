@@ -22,7 +22,7 @@ const shape = (type: 'rectangle' | 'ellipse' | 'arrow' | 'pen' | 'text'): Excali
 describe('styleGroupsFor', () => {
   it('offers only the groups a drawing tool can use', () => {
     expect(styleGroupsFor('pen', null)).toEqual(['stroke', 'strokeWidth'])
-    expect(styleGroupsFor('arrow', null)).toEqual(['stroke', 'strokeWidth'])
+    expect(styleGroupsFor('arrow', null)).toEqual(['stroke', 'lineStyle', 'strokeWidth'])
     expect(styleGroupsFor('rectangle', null)).toEqual(['stroke', 'background', 'strokeWidth'])
     expect(styleGroupsFor('ellipse', null)).toEqual(['stroke', 'background', 'strokeWidth'])
   })
@@ -36,6 +36,11 @@ describe('styleGroupsFor', () => {
 
   it('follows the selected element type', () => {
     expect(styleGroupsFor('select', shape('pen'))).toEqual(['stroke', 'strokeWidth'])
+    expect(styleGroupsFor('select', shape('arrow'))).toEqual([
+      'stroke',
+      'lineStyle',
+      'strokeWidth',
+    ])
     expect(styleGroupsFor('select', shape('text'))).toEqual(['stroke'])
     expect(styleGroupsFor('select', shape('rectangle'))).toEqual([
       'stroke',
@@ -86,7 +91,7 @@ describe('tool metadata', () => {
   it('gives every tool a shortcut and maps the shortcut back', () => {
     const tools = TOOL_GROUPS.flat()
     for (const tool of tools) {
-      const key = TOOL_SHORTCUTS[tool]
+      const key = TOOL_SHORTCUTS[tool]!
       expect(key).toHaveLength(1)
       expect(SHORTCUT_TO_TOOL[key.toLowerCase()]).toBe(tool)
     }

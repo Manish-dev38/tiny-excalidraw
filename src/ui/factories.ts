@@ -5,6 +5,7 @@ import type {
   PenElement,
   Point,
   RectLikeElement,
+  RectLikeType,
   TextElement,
 } from '../core/types'
 
@@ -12,12 +13,15 @@ export interface DrawStyle {
   strokeColor: string
   background: string
   strokeWidth: number
+  /** Dashed stroke, used for arrows. */
+  dashed: boolean
 }
 
 export const DEFAULT_STYLE: DrawStyle = {
   strokeColor: '#000',
   background: 'transparent',
   strokeWidth: 2,
+  dashed: false,
 }
 
 export function makeRectElement(
@@ -47,6 +51,18 @@ export function makeArrowElement(
   style: DrawStyle = DEFAULT_STYLE,
 ): ArrowElement {
   return { id, type: 'arrow', points: [start, end], x: start.x, y: start.y, ...style }
+}
+
+/** Builds any box-shaped element, including infrastructure shapes. */
+export function makeShapeElement(
+  id: string,
+  type: RectLikeType,
+  start: Point,
+  end: Point,
+  style: DrawStyle = DEFAULT_STYLE,
+): RectLikeElement {
+  const r = fitRect(start, end)
+  return { id, type, ...r, ...style }
 }
 
 export function makePenElement(

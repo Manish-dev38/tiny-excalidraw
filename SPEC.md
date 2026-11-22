@@ -25,7 +25,7 @@ bundle weight.
 | 3 | Session model | **IndexedDB per-room + dynamic room link** (board survives tab close; localStorage fallback) |
 | 4 | Presence | **Live cursor presence** — see the other user's pointer |
 | 5 | Voice | **None** (users bring their own call) |
-| 6 | Tools | **Select, hand, pen, rectangle, ellipse, arrow, text, eraser** |
+| 6 | Tools | **Select, hand, pen, rectangle, ellipse, arrow, text, eraser + infrastructure shapes** |
 | 7 | Undo/redo | **Full stack, per-person + synced** |
 | 8 | Canvas | **Infinite pan + zoom** (bounded ~10%–400%; wheel zoom; hand tool / space-drag / right-click pan) |
 | 9 | Export | **PNG + SVG** |
@@ -37,6 +37,12 @@ bundle weight.
 | 15 | Board files | **Save / Save As / Import `.whiteboard` JSON** (editable scenes, no backend) |
 | 16 | Autosave | **300 ms debounced IndexedDB writes + visible saved status** |
 | 17 | Restore | **Reopen the last active board on a bare URL; Back to home clears it** |
+| 18 | Multi-select | **Shift-click and rubber-band marquee; group move/delete/style as one undo step** |
+| 19 | Clipboard | **Internal copy/cut/paste/duplicate (`Ctrl/⌘ C/X/V/D`) with offset fan-out; no cross-app paste** |
+| 20 | Text editing | **Double-click or Enter reopens the inline editor pre-filled; emptying the text deletes it** |
+| 21 | Shapes | **Five infrastructure shapes — laptop, database, server, cloud, user — in a toolbar picker** |
+| 22 | Arrows | **Orthogonal elbow routing, arrowhead along the path, optional dashed style** |
+| 23 | Attachment | **Arrow ends snap to a shape's facing side and follow shape moves; moving an arrow detaches it** |
 
 ## 3. Architecture
 
@@ -46,27 +52,35 @@ bundle weight.
   - element mutations: `add`, `update`, `remove`
   - whole-scene replacement: `replace` (atomic import sync)
   - presence: `cursor` (x, y, tool)
+  - `update` patches use `null` to remove an optional property (arrow attachments)
+    because JSON drops `undefined` keys.
 - **IndexedDB** (`tiny-excalidraw`, version 1) holds recent boards keyed by room id,
   capped at 10 with manual delete. A `meta` store holds the last active room and the
   one-time legacy-migration marker. A localStorage adapter takes over with a warning
   when IndexedDB is unavailable.
 - **Board files** are versioned JSON envelopes wrapping the same scene; importing
-  validates the whole file before changing anything.
+  validates the whole file before changing anything. Version 2 adds infrastructure
+  shapes; version 1 files still import.
 - **Autosave** writes the scene through an injected repository after a trailing 300 ms
   debounce, tracks saving/saved/failed status, and flushes on hide, page leave, and
   before returning home.
 - **Scene model:** an ordered list of elements (strokes, shapes, text). Each has a stable
-  unique id. Shared state is idempotent so late-joining peers converge.
+  unique id. Arrows may carry `startBinding`/`endBinding` `{ shapeId }` attachments.
+  Shared state is idempotent so late-joining peers converge.
+- **Grouped actions** (multi-move, multi-delete, detach-on-delete, paste/duplicate) are
+  applied as one batched history op, so they undo and redo in a single step while the
+  broadcast still fans out to individual peer ops.
 
 ## 4. Tools & interaction
 
 | Tool | Behavior |
 |------|----------|
-| Select | Click to select (dashed outline), drag to move, Delete to remove |
+| Select | Click to select (dashed outline); drag a selection to move it; Delete to remove |
 | Hand | Drag to pan the canvas |
 | Pen | Freehand stroke from pointer path (points + widths) |
 | Rectangle / Ellipse | Drag to size from anchor point |
-| Arrow | Drag to place line with arrowhead |
+| Shapes | Picker with laptop, database, server, cloud, and user; drag to size like a rectangle |
+| Arrow | Drag to place an elbow-routed arrow that attaches to nearby shapes |
 | Text | Click to place, type inline, Enter commits, Shift+Enter adds a line, Escape cancels |
 | Eraser | Overlap-based removal of strokes/shapes |
 
@@ -74,7 +88,25 @@ bundle weight.
   `P` pen, `T` text, `E` eraser; `Delete` removes the selection; `Esc` returns to select.
 - Pan: hand tool, space-drag, or middle/right mouse drag. Zoom: mouse wheel / buttons,
   bounded ~10%–400%. Clicking the zoom percentage resets it to 100%.
-- The active tool persists after drawing (it does not snap back to select).
+- After drawing, the new element is selected and the tool returns to Select, so style
+  changes apply to that element immediately instead of only to future drawings.
+- Multi-select: Shift-click toggles an element in the selection; dragging from empty
+  canvas rubber-bands a marquee. Group move, delete, and style changes apply to the whole
+  selection and undo as one step. Style changes only touch properties an element accepts
+  (e.g. no background on text).
+- Clipboard: `Ctrl/⌘ C`, `X`, `V`, and `D` copy/cut/paste/duplicate the selection through
+  an internal (localStorage-backed) clipboard shared by board tabs. Pastes offset by
+  20 px and fan out on repeated paste; text fields keep native clipboard behaviour and
+  external paste is out of scope. Arrow attachments are remapped to cloned shapes or
+  dropped when the target shape is not part of the copied set.
+- Text: double-click a text element, or press Enter with one selected, to reopen the
+  inline editor pre-filled. Enter commits (trimmed), Escape discards, click-away commits,
+  unchanged text is a no-op, and emptying the text removes the element.
+- Arrows: routed as orthogonal elbows (two runs joined by a mid jog, straight for
+  axis-aligned drags), with the arrowhead drawn along the final segment. Ends that land
+  on a shape (within 10 px) snap to the facing side midpoint and persist as attachments;
+  moving that shape drags the arrow ends along, while moving the arrow itself detaches
+  it. Deleting a shape detaches its arrows and keeps their endpoints.
 - Pointer Events unify mouse/touch/stylus for all tools.
 
 ## 5. UI / visual design (Excalidraw-inspired)
@@ -84,8 +116,10 @@ bundle weight.
   Assistant + handwriting pairing.
 - Floating chrome instead of full-width bars:
   - **Top-left:** hamburger toggles the properties panel.
-  - **Top centre:** one tool pill, grouped `hand/select · rectangle/ellipse/arrow · pen/text/eraser`.
-    The active tool is filled, and each button carries its keyboard shortcut.
+  - **Top centre:** one tool pill, grouped `hand/select · rectangle/ellipse/arrow · pen/text/eraser`,
+    plus a **Shapes** picker button that opens a small menu (laptop, database, server, cloud,
+    user) so the pill stays compact. The active tool is filled, and each button carries its
+    keyboard shortcut.
   - **Top-right:** saved/unsaved status and `Save` sit beside `Share`, which copies the
     room link and shows a live/connecting/offline dot; the `…` menu holds Save As,
     Import board, Export PNG, Export SVG, Fit to screen, theme toggle, Back to home, and
@@ -93,15 +127,21 @@ bundle weight.
   - **Bottom-left:** zoom pill (`−`, percentage, `+`; percentage resets) and undo/redo pill.
   - **Bottom-right:** `?` help popover listing every shortcut.
 - **Properties panel** floats under the hamburger and renders only meaningful groups:
-  pen/arrow → stroke + stroke width; rectangle/ellipse → stroke + background + stroke
-  width; text → stroke. It is contextual for drawing tools and selections, closed for
+  pen → stroke + stroke width; arrow → stroke + line style (solid/dashed) + stroke
+  width; rectangle/ellipse/infrastructure shapes → stroke + background + stroke width;
+  text → stroke. It is contextual for drawing tools and selections, closed for
   select/hand/eraser with no selection, and the hamburger can pin it open or closed.
+  With a multi-selection the groups follow the primary (last-selected) element and apply
+  to every selected element that accepts the property.
 - A contextual hint under the tool pill describes the active tool; it hides while the
   text editor is open and on narrow screens.
 - **Text** uses an in-canvas inline editor: click to place, type, Enter commits,
-  Shift+Enter inserts a newline, Escape cancels, click-away commits. Text inherits the
-  current stroke colour so it stays visible in either theme, supports multiple lines in
-  canvas rendering, bounds and SVG export, and selects itself after commit.
+  Shift+Enter inserts a newline, Escape cancels, click-away commits. Double-clicking an
+  existing text (or pressing Enter while it is selected) reopens the same editor
+  pre-filled. Text inherits the current stroke colour so it stays visible in either
+  theme, supports multiple lines in canvas rendering, bounds and SVG export, and selects
+  itself after commit. Only one editor exists at a time; opening another commits the
+  open one first.
 - Home screen: app name, "Create a board", a secondary "Import a board" button, and a
   recent-boards list with delete.
 - Every icon/asset is drawn in-house (CSS or small SVG), not copied.
@@ -112,7 +152,8 @@ bundle weight.
 
 ## 6. Export
 
-- SVG: serialize scene to `<svg>` (crisp at any zoom, printable).
+- SVG: serialize scene to `<svg>` (crisp at any zoom, printable), including elbow-routed
+  arrows, dashed strokes, and the infrastructure shapes.
 - PNG: render scene to an offscreen canvas at a fixed scale, download.
 
 ## 7. Board files, autosave & restore
@@ -133,7 +174,7 @@ bundle weight.
 ```json
 {
   "format": "tiny-excalidraw",
-  "version": 1,
+  "version": 2,
   "savedAt": "2026-11-05T10:00:00.000Z",
   "roomId": "abc123",
   "scene": { "elements": [] }
@@ -141,13 +182,17 @@ bundle weight.
 ```
 
 - The scene reuses the existing element model, so every stroke, shape, arrow, text
-  block, colour, position, and size round-trips and stays editable.
+  block, colour, position, size, dashed flag, and arrow attachment round-trips and stays
+  editable.
+- Version 2 adds infrastructure shapes and arrow attachments; version 1 files still
+  import unchanged (the element model is compatible), and version 3+ is rejected as
+  "created by a newer version".
 - Import accepts the versioned envelope, plus legacy raw `{ elements }` objects, with
   `.whiteboard` and `.json` extensions.
 - Validation is all-or-nothing: malformed JSON, wrong formats/versions, missing or
-  type-invalid fields, non-finite numbers, duplicate ids, unsupported types (including
-  `image`), more than 5 MB, 10,000 elements, or 50,000 points per stroke reject the
-  whole file.
+  type-invalid fields (including arrow attachment shape ids), non-finite numbers,
+  duplicate ids, unsupported types (including `image`), more than 5 MB, 10,000 elements,
+  or 50,000 points per stroke reject the whole file.
 - Files from a newer version fail with a specific "created by a newer version" message.
 
 ### Import behaviour
@@ -178,7 +223,10 @@ bundle weight.
 ## 8. Testing & quality
 
 - TDD-driven build. Unit tests for the core, framework-free modules (scene model, undo/redo
-  stack, element geometry, serialization/export, room-id generation).
+  stack, element geometry, elbow routing, arrow bindings, serialization/export,
+  board-file validation, clipboard cloning, text-edit rules, room-id generation).
+- Interactions that need a DOM (marquee, clipboard shortcuts, inline text editing,
+  dragging bound arrows) are verified in the browser against the running app.
 - Type-safe: strict TypeScript throughout. No `any` leaks at module boundaries.
 - Runtime checks in dev; production build is tree-shaken and gzip-reasonable.
 
@@ -188,15 +236,19 @@ bundle weight.
   cloud persistence/accounts, real Excalidraw file format compat, mobile PWA offline.
 - Silent overwrite of a chosen file via the File System Access API, board titles, and
   persisting viewport/tool/selection per board.
+- Arrow labels, bound text labels inside shapes, and cross-application clipboard paste.
 
 ## 10. Definition of done
 
 1. Home screen creates, imports, joins, and deletes rooms; recent boards persist and load.
 2. Two tabs/users can draw together in near real time with live cursors.
-3. All eight tools work with undo/redo (synced).
+3. Every tool (pen, rectangle, ellipse, arrow, text, eraser, and the five infrastructure
+   shapes) works with undo/redo (synced).
 4. Pan/zoom works within bounds.
-5. PNG & SVG export work.
-6. Save, Save As, and Import round-trip editable `.whiteboard` files.
+5. PNG & SVG export work, including elbow arrows, dashes, and infrastructure shapes.
+6. Save, Save As, and Import round-trip editable `.whiteboard` files (v2, with v1 import).
 7. Autosave shows its status, flushes when leaving, and reopens the last board.
-8. Netlify deploy produces a working static site.
-9. `npm run build` and `npm test` pass cleanly.
+8. Multi-select, the internal clipboard, text re-editing, and arrow attachment all behave
+   as specified and undo as single steps.
+9. Netlify deploy produces a working static site.
+10. `npm run build` and `npm test` pass cleanly.

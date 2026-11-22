@@ -7,21 +7,31 @@ to run.
 
 ## Features
 
-- Tools: select, hand, pen, rectangle, ellipse, arrow, text, eraser
-- **Select/move**: pick the select tool (arrow icon), click an element to select
-  it (dashed outline), drag to move it, press Delete to remove it
+- Tools: select, hand, pen, rectangle, ellipse, arrow, text, eraser, plus five
+  infrastructure shapes (laptop, database, server, cloud, user) from a toolbar picker
+- **Select/move**: pick the select tool (arrow icon), click an element to select it
+  (dashed outline), drag to move it, press Delete to remove it; the element you just drew
+  is selected automatically, so styles apply to it right away
+- **Multi-select**: Shift-click to add or remove elements, or drag a marquee from empty
+  canvas; group move, delete, and style changes undo as a single step
+- **Clipboard**: `Ctrl/Cmd+C/X/V/D` copy, cut, paste, and duplicate through an internal
+  clipboard; pastes offset and fan out, and arrow attachments follow the cloned shapes
 - **Hand tool**: drag to pan, alongside space-drag and middle/right-drag
 - Infinite pan + zoom (mouse wheel / hand tool / space-drag), with a zoom pill you can
   click to reset to 100%
 - Full undo/redo (Ctrl/Cmd+Z, Ctrl+Shift+Z or Ctrl+Y) and clickable undo/redo pills
 - **Floating Excalidraw-style chrome**: centred tool pill with shortcut badges,
   hamburger properties panel, Share, `…` menu, bottom hints and a `?` shortcut popover
-- **Contextual properties panel**: stroke, background, and stroke width — only the
-  groups that apply to the active tool or selection
+- **Contextual properties panel**: stroke, background, stroke width, and a solid/dashed
+  line style for arrows — only the groups that apply to the active tool or selection
+- **Arrows**: elbow (orthogonal) routing with the head drawn along the path; ends that
+  land on a shape snap to its edge and follow that shape when it moves, while dragging
+  the arrow itself detaches it
 - **Share** copies the room link and reports live/connecting/offline state
 - Keyboard shortcuts: `V` `H` `R` `O` `A` `P` `T` `E`, Space to pan, wheel to zoom
 - **Text**: click to place, Enter commits, Shift+Enter adds a line, Escape cancels,
-  click-away commits; text inherits the stroke colour and exports as multiple lines
+  click-away commits; double-click (or Enter on a selected text) reopens the editor
+  pre-filled, and text inherits the stroke colour and exports as multiple lines
 - Real-time collaboration with live cursor presence, including name labels
 - **Save** (`Ctrl/Cmd+S`) downloads the whole board as an editable `.whiteboard` JSON
   file; **Save As** (`Ctrl/Cmd+Shift+S`) lets you choose and remember its filename
@@ -41,7 +51,7 @@ to run.
 ```bash
 npm install
 npm run dev        # dev server
-npm test           # vitest suite (128 tests)
+npm test           # vitest suite (183 tests)
 npm run build      # type-check + production build to dist/
 ```
 
@@ -53,7 +63,9 @@ npm run build      # type-check + production build to dist/
    whoever joins later connects as a client. If the host is offline, the client
    shows "Friend offline".
 3. Draw together — strokes, shapes, and text appear live on both screens.
-4. Bring your own voice/video call; the board is canvas-only.
+4. Draw an arrow from one shape to another to connect them: endpoints snap to the
+   nearest edge and keep following when you move the shapes.
+5. Bring your own voice/video call; the board is canvas-only.
 
 ## Saving and restoring boards
 
@@ -83,13 +95,15 @@ The app is a static site; collaboration uses PeerJS's free cloud signaling.
 
 ```
 src/
-  core/       pure logic: types, scene, geometry, history (op-based undo),
-              room ids, serialization, SVG export, board-file codec/validation
+  core/       pure logic: types, scene, geometry, elbow routing and arrow
+              bindings, history (op-based undo), room ids, serialization,
+              SVG export, board-file codec/validation
   collab/     peer protocol (validated message envelope) + PeerJS session
-  ui/         canvas app, renderer, toolbar, chrome, properties,
-              ui-state rules, home screen, viewport, element factories,
-              eraser, downloads, dialogs, autosave controller, storage
-              repository (IndexedDB + localStorage fallback)
+  ui/         canvas app, renderer, toolbar (+ shapes picker), chrome,
+              properties, ui-state rules, home screen, viewport, element
+              factories, selection, clipboard, text editing, eraser,
+              downloads, dialogs, autosave controller, storage repository
+              (IndexedDB + localStorage fallback)
 ```
 
 The core domain logic is developed test-first (TDD) — see `src/**/*.test.ts`.

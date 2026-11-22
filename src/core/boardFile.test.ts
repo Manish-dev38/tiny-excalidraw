@@ -134,6 +134,43 @@ describe('parseBoardFile', () => {
     expect(parsed.scene.elements).toEqual([rect])
   })
 
+  it('still imports v1 board files', () => {
+    const legacyEnvelope = JSON.stringify({
+      format: BOARD_FORMAT,
+      version: 1,
+      savedAt: '2026-11-05T00:00:00.000Z',
+      roomId: 'abc123',
+      scene: { elements: [rect, text] },
+    })
+    const parsed = parseBoardFile(legacyEnvelope)
+    expect(parsed.legacy).toBe(false)
+    expect(parsed.scene.elements).toEqual([rect, text])
+  })
+
+  it('accepts the infrastructure shapes in a v2 board', () => {
+    const shapes = (['laptop', 'database', 'server', 'cloud', 'user'] as const).map((type, i) => ({
+      ...rect,
+      id: `shape-${i}`,
+      type,
+      width: 60,
+      height: 60,
+    }))
+    const parsed = parseBoardFile(envelope(shapes))
+    expect(parsed.scene.elements.map((e) => e.type)).toEqual([
+      'laptop',
+      'database',
+      'server',
+      'cloud',
+      'user',
+    ])
+  })
+
+  it('rejects infra shapes with invalid sizes', () => {
+    expect(() =>
+      parseBoardFile(envelope([{ ...rect, type: 'laptop', width: 'x' }])),
+    ).toThrow('invalid size')
+  })
+
   it('accepts an empty scene', () => {
     expect(parseBoardFile(envelope([])).scene).toEqual({ elements: [] })
   })
@@ -149,7 +186,7 @@ describe('parseBoardFile', () => {
       parseBoardFile(JSON.stringify({ format: 'excalidraw', version: 1, scene: { elements: [] } })),
     ).toThrow("This isn't a Tiny Excalidraw board file.")
     expect(() =>
-      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 2, scene: { elements: [] } })),
+      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 3, scene: { elements: [] } })),
     ).toThrow('newer version')
     expect(() =>
       parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 0, scene: { elements: [] } })),
@@ -191,6 +228,23 @@ describe('parseBoardFile', () => {
     expect(() =>
       parseBoardFile(envelope([{ ...text, fontSize: 0 }])),
     ).toThrow('text with invalid properties')
+  })
+
+  it('accepts valid arrow attachments and rejects malformed ones', () => {
+    const arrow = {
+      ...rect,
+      type: 'arrow',
+      points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
+      endBinding: { shapeId: 'shape-1' },
+    }
+    const parsed = parseBoardFile(envelope([arrow]))
+    expect(parsed.scene.elements[0]).toMatchObject({ endBinding: { shapeId: 'shape-1' } })
+    expect(() =>
+      parseBoardFile(envelope([{ ...arrow, startBinding: { shapeId: '' } }])),
+    ).toThrow('arrow with an invalid attachment')
+    expect(() =>
+      parseBoardFile(envelope([{ ...arrow, endBinding: 'shape-1' }])),
+    ).toThrow('arrow with an invalid attachment')
   })
 
   it('rejects duplicate ids', () => {

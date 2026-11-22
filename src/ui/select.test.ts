@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hitTestElement, translateElement } from './select'
+import { acceptsStyle, elementsInRect, hitTestElement, translateElement } from './select'
 import type { ArrowElement, ExcalidrawElement, PenElement } from '../core/types'
 
 const rect = (id: string, x: number, y: number): ExcalidrawElement => ({
@@ -34,6 +34,11 @@ describe('hitTestElement', () => {
   })
   it('misses a point outside the rectangle', () => {
     expect(hitTestElement(rect('a', 0, 0), { x: 12, y: 5 })).toBe(false)
+  })
+  it('hits infrastructure shapes by their box', () => {
+    const laptop: ExcalidrawElement = { ...rect('a', 0, 0), type: 'laptop' } as ExcalidrawElement
+    expect(hitTestElement(laptop, { x: 5, y: 5 })).toBe(true)
+    expect(hitTestElement(laptop, { x: 15, y: 5 })).toBe(false)
   })
   it('hits a pen stroke near one of its points', () => {
     const p = pen('a', [
@@ -88,5 +93,54 @@ describe('translateElement', () => {
       { x: 2, y: 2 },
       { x: 12, y: 12 },
     ])
+  })
+})
+
+describe('elementsInRect', () => {
+  it('selects elements fully inside the rect', () => {
+    const els = [rect('a', 0, 0), rect('b', 50, 50)]
+    const hits = elementsInRect(els, { x: -5, y: -5 }, { x: 100, y: 100 })
+    expect(hits.map((e) => e.id)).toEqual(['a', 'b'])
+  })
+  it('selects partially overlapping elements', () => {
+    const els = [rect('a', 0, 0)]
+    const hits = elementsInRect(els, { x: 5, y: 5 }, { x: 100, y: 100 })
+    expect(hits.map((e) => e.id)).toEqual(['a'])
+  })
+  it('ignores elements outside the rect', () => {
+    const els = [rect('a', 0, 0), rect('b', 500, 500)]
+    const hits = elementsInRect(els, { x: -5, y: -5 }, { x: 20, y: 20 })
+    expect(hits.map((e) => e.id)).toEqual(['a'])
+  })
+  it('normalizes a backwards marquee rect', () => {
+    const els = [rect('a', 0, 0)]
+    const hits = elementsInRect(els, { x: 100, y: 100 }, { x: -5, y: -5 })
+    expect(hits.map((e) => e.id)).toEqual(['a'])
+  })
+  it('keeps scene order regardless of drag direction', () => {
+    const els = [rect('a', 0, 0), rect('b', 50, 50)]
+    const hits = elementsInRect(els, { x: 100, y: 100 }, { x: -5, y: -5 })
+    expect(hits.map((e) => e.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('acceptsStyle', () => {
+  it('accepts stroke for every type', () => {
+    for (const type of ['pen', 'rectangle', 'ellipse', 'arrow', 'text'] as const) {
+      expect(acceptsStyle(type, 'strokeColor')).toBe(true)
+    }
+  })
+  it('accepts background only for rect-like shapes', () => {
+    expect(acceptsStyle('rectangle', 'background')).toBe(true)
+    expect(acceptsStyle('ellipse', 'background')).toBe(true)
+    expect(acceptsStyle('pen', 'background')).toBe(false)
+    expect(acceptsStyle('text', 'background')).toBe(false)
+    expect(acceptsStyle('arrow', 'background')).toBe(false)
+  })
+  it('accepts stroke width for everything except text', () => {
+    expect(acceptsStyle('pen', 'strokeWidth')).toBe(true)
+    expect(acceptsStyle('arrow', 'strokeWidth')).toBe(true)
+    expect(acceptsStyle('rectangle', 'strokeWidth')).toBe(true)
+    expect(acceptsStyle('text', 'strokeWidth')).toBe(false)
   })
 })

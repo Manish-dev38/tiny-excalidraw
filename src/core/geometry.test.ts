@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bboxOf,
   dist,
+  elbowRoute,
   ellipseContainsPoint,
   fitRect,
   rectContainsPoint,
@@ -27,6 +28,68 @@ describe('dist', () => {
   it('computes Euclidean distance', () => {
     expect(dist({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5)
     expect(dist({ x: 1, y: 2 }, { x: 1, y: 2 })).toBe(0)
+  })
+})
+
+describe('bboxOf infrastructure shapes', () => {
+  it('uses the element box plus half the stroke', () => {
+    for (const type of ['laptop', 'database', 'server', 'cloud', 'user'] as const) {
+      const b = bboxOf(rect({ type, width: 40, height: 30 }) as ExcalidrawElement)
+      expect(b).toEqual({ minX: -0.5, minY: -0.5, maxX: 40.5, maxY: 30.5 })
+    }
+  })
+})
+
+describe('elbowRoute', () => {
+  it('routes horizontally dominant arrows with a vertical jog', () => {
+    const r = elbowRoute({ x: 0, y: 0 }, { x: 100, y: 40 })
+    expect(r).toEqual([
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 40 },
+      { x: 100, y: 40 },
+    ])
+  })
+  it('routes vertically dominant arrows with a horizontal jog', () => {
+    const r = elbowRoute({ x: 0, y: 0 }, { x: 40, y: 100 })
+    expect(r).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 50 },
+      { x: 40, y: 50 },
+      { x: 40, y: 100 },
+    ])
+  })
+  it('keeps axis-aligned drags straight', () => {
+    expect(elbowRoute({ x: 0, y: 0 }, { x: 100, y: 0 })).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ])
+    expect(elbowRoute({ x: 5, y: 5 }, { x: 5, y: 90 })).toEqual([
+      { x: 5, y: 5 },
+      { x: 5, y: 90 },
+    ])
+  })
+  it('keeps every bend inside the endpoint bounding box', () => {
+    const a = { x: 10, y: 20 }
+    const b = { x: 130, y: 90 }
+    for (const p of elbowRoute(a, b)) {
+      expect(p.x).toBeGreaterThanOrEqual(a.x)
+      expect(p.x).toBeLessThanOrEqual(b.x)
+      expect(p.y).toBeGreaterThanOrEqual(a.y)
+      expect(p.y).toBeLessThanOrEqual(b.y)
+    }
+  })
+  it('starts at a and ends at b', () => {
+    const r = elbowRoute({ x: 1, y: 2 }, { x: 99, y: 42 })
+    expect(r[0]).toEqual({ x: 1, y: 2 })
+    expect(r[r.length - 1]).toEqual({ x: 99, y: 42 })
+  })
+  it('works for backwards drags (b left/above a)', () => {
+    const r = elbowRoute({ x: 100, y: 100 }, { x: 20, y: 30 })
+    expect(r[0]).toEqual({ x: 100, y: 100 })
+    expect(r[r.length - 1]).toEqual({ x: 20, y: 30 })
+    expect(r).toHaveLength(4)
+    expect(r[1]).toEqual({ x: 60, y: 100 })
   })
 })
 

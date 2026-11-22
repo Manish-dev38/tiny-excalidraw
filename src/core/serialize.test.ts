@@ -38,6 +38,21 @@ describe('serializeScene / deserializeScene', () => {
     const restored = deserializeScene(serializeScene(addElement(createScene(), pen)))
     expect(restored.elements[0]).toEqual(pen)
   })
+  it('round-trips infrastructure shapes (autosave restore path)', () => {
+    const server: ExcalidrawElement = {
+      id: 's1',
+      type: 'server',
+      x: 5,
+      y: 6,
+      width: 70,
+      height: 90,
+      strokeColor: '#000',
+      background: '#ffec99',
+      strokeWidth: 2,
+    }
+    const restored = deserializeScene(serializeScene(addElement(createScene(), server)))
+    expect(restored.elements[0]).toEqual(server)
+  })
   it('throws on invalid JSON', () => {
     expect(() => deserializeScene('not json')).toThrow()
   })

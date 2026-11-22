@@ -1,12 +1,119 @@
 import type { Point } from '../core/types'
-import type { ExcalidrawElement } from '../core/types'
-import { LINE_HEIGHT } from '../core/geometry'
+import type { ExcalidrawElement, RectLikeType } from '../core/types'
+import { elbowRoute, LINE_HEIGHT, traceRoute } from '../core/geometry'
 import type { Viewport } from './viewport'
 
 export const HANDWRITING_FONT = "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive"
 
 export function strokeStyle(el: ExcalidrawElement): string {
   return el.strokeColor
+}
+
+/**
+ * Traces the outline of a box shape into the current path. Infrastructure
+ * shapes are drawn from the same (x, y, width, height) box as rectangles so
+ * they scale, fill, and hit-test consistently.
+ */
+export function traceBoxShape(
+  ctx: CanvasRenderingContext2D,
+  type: RectLikeType,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  switch (type) {
+    case 'rectangle':
+      ctx.rect(x, y, w, h)
+      return
+    case 'ellipse':
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
+      return
+    case 'laptop': {
+      // Screen and keyboard deck.
+      ctx.rect(x + w * 0.08, y, w * 0.84, h * 0.68)
+      ctx.moveTo(x, y + h)
+      ctx.lineTo(x + w * 0.1, y + h * 0.78)
+      ctx.lineTo(x + w * 0.9, y + h * 0.78)
+      ctx.lineTo(x + w, y + h)
+      ctx.closePath()
+      return
+    }
+    case 'database': {
+      // Cylinder: body sides + bottom arc, then the top rim.
+      const ry = Math.max(1, h * 0.12)
+      const cx = x + w / 2
+      ctx.moveTo(x, y + ry)
+      ctx.lineTo(x, y + h - ry)
+      ctx.ellipse(cx, y + h - ry, w / 2, ry, 0, Math.PI, 0)
+      ctx.lineTo(x + w, y + ry)
+      ctx.moveTo(x + w, y + ry)
+      ctx.ellipse(cx, y + ry, w / 2, ry, 0, Math.PI * 2, 0)
+      return
+    }
+    case 'server': {
+      // Rack body with two shelf lines.
+      ctx.rect(x + w * 0.08, y, w * 0.84, h)
+      for (const frac of [1 / 3, 2 / 3]) {
+        ctx.moveTo(x + w * 0.08, y + h * frac)
+        ctx.lineTo(x + w * 0.92, y + h * frac)
+      }
+      return
+    }
+    case 'cloud': {
+      ctx.moveTo(x + w * 0.22, y + h * 0.85)
+      ctx.bezierCurveTo(
+        x - w * 0.02, y + h * 0.85,
+        x, y + h * 0.45,
+        x + w * 0.25, y + h * 0.44,
+      )
+      ctx.bezierCurveTo(
+        x + w * 0.28, y + h * 0.12,
+        x + w * 0.66, y + h * 0.08,
+        x + w * 0.7, y + h * 0.36,
+      )
+      ctx.bezierCurveTo(
+        x + w * 0.95, y + h * 0.3,
+        x + w * 1.02, y + h * 0.65,
+        x + w * 0.82, y + h * 0.85,
+      )
+      ctx.closePath()
+      return
+    }
+    case 'user': {
+      const cx = x + w / 2
+      const r = Math.min(w, h) * 0.18
+      ctx.ellipse(cx, y + h * 0.3, r, r, 0, 0, Math.PI * 2)
+      ctx.moveTo(cx - w * 0.4, y + h)
+      ctx.bezierCurveTo(
+        cx - w * 0.4, y + h * 0.58,
+        cx + w * 0.4, y + h * 0.58,
+        cx + w * 0.4, y + h,
+      )
+      ctx.closePath()
+      return
+    }
+  }
+}
+
+function drawBoxShape(
+  ctx: CanvasRenderingContext2D,
+  type: RectLikeType,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  style: { strokeColor: string; background: string; strokeWidth: number },
+): void {
+  ctx.beginPath()
+  traceBoxShape(ctx, type, x, y, w, h)
+  if (style.background !== 'transparent') {
+    ctx.fillStyle = style.background
+    ctx.fill()
+  }
+  ctx.lineWidth = style.strokeWidth
+  ctx.strokeStyle = style.strokeColor
+  ctx.stroke()
 }
 
 export function drawElement(ctx: CanvasRenderingContext2D, el: ExcalidrawElement): void {
@@ -25,42 +132,30 @@ export function drawElement(ctx: CanvasRenderingContext2D, el: ExcalidrawElement
       ctx.stroke()
       break
     }
-    case 'rectangle': {
-      if (el.background !== 'transparent') {
-        ctx.fillStyle = el.background
-        ctx.fillRect(el.x, el.y, el.width, el.height)
-      }
-      ctx.lineWidth = el.strokeWidth
-      ctx.strokeStyle = el.strokeColor
-      ctx.strokeRect(el.x, el.y, el.width, el.height)
+    case 'rectangle':
+    case 'ellipse':
+    case 'laptop':
+    case 'database':
+    case 'server':
+    case 'cloud':
+    case 'user':
+      drawBoxShape(ctx, el.type, el.x, el.y, el.width, el.height, el)
       break
-    }
-    case 'ellipse': {
-      const cx = el.x + el.width / 2
-      const cy = el.y + el.height / 2
-      const rx = Math.abs(el.width / 2)
-      const ry = Math.abs(el.height / 2)
-      ctx.beginPath()
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
-      if (el.background !== 'transparent') {
-        ctx.fillStyle = el.background
-        ctx.fill()
-      }
-      ctx.lineWidth = el.strokeWidth
-      ctx.strokeStyle = el.strokeColor
-      ctx.stroke()
-      break
-    }
     case 'arrow': {
       const [a, b] = el.points
+      const route = elbowRoute(a, b)
       ctx.lineWidth = el.strokeWidth
       ctx.strokeStyle = el.strokeColor
       ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.setLineDash(el.dashed ? [8, 7] : [])
       ctx.beginPath()
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(b.x, b.y)
+      traceRoute(ctx, route)
       ctx.stroke()
-      drawArrowHead(ctx, b, a, el.strokeWidth)
+      ctx.setLineDash([])
+      const tip = route[route.length - 1]
+      const prev = route[route.length - 2]
+      drawArrowHead(ctx, tip, prev, el.strokeWidth)
       break
     }
     case 'text': {
@@ -131,43 +226,30 @@ export function renderPath(
 
 export function renderShape(
   ctx: CanvasRenderingContext2D,
-  type: 'rectangle' | 'ellipse' | 'arrow',
+  type: RectLikeType | 'arrow',
   a: Point,
   b: Point,
-  style: { strokeColor: string; strokeWidth: number; background: string },
+  style: { strokeColor: string; strokeWidth: number; background: string; dashed?: boolean },
 ): void {
   if (type === 'arrow') {
+    const route = elbowRoute(a, b)
     ctx.lineWidth = style.strokeWidth
     ctx.strokeStyle = style.strokeColor
     ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.setLineDash(style.dashed ? [8, 7] : [])
     ctx.beginPath()
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
+    traceRoute(ctx, route)
     ctx.stroke()
-    drawArrowHead(ctx, b, a, style.strokeWidth)
+    ctx.setLineDash([])
+    const tip = route[route.length - 1]
+    const prev = route[route.length - 2]
+    drawArrowHead(ctx, tip, prev, style.strokeWidth)
     return
   }
   const x = Math.min(a.x, b.x)
   const y = Math.min(a.y, b.y)
   const w = Math.abs(b.x - a.x)
   const h = Math.abs(b.y - a.y)
-  ctx.beginPath()
-  if (type === 'rectangle') {
-    if (style.background !== 'transparent') {
-      ctx.fillStyle = style.background
-      ctx.fillRect(x, y, w, h)
-    }
-    ctx.lineWidth = style.strokeWidth
-    ctx.strokeStyle = style.strokeColor
-    ctx.strokeRect(x, y, w, h)
-  } else {
-    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
-    if (style.background !== 'transparent') {
-      ctx.fillStyle = style.background
-      ctx.fill()
-    }
-    ctx.lineWidth = style.strokeWidth
-    ctx.strokeStyle = style.strokeColor
-    ctx.stroke()
-  }
+  drawBoxShape(ctx, type as RectLikeType, x, y, w, h, style)
 }

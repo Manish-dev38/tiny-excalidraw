@@ -2,7 +2,17 @@ import type { Scene } from '../core/scene'
 import { parseSceneElements } from '../core/boardFile'
 import type { ExcalidrawElement } from '../core/types'
 
-export type Tool = 'pen' | 'rectangle' | 'ellipse' | 'arrow' | 'text'
+export type Tool =
+  | 'pen'
+  | 'rectangle'
+  | 'ellipse'
+  | 'arrow'
+  | 'text'
+  | 'laptop'
+  | 'database'
+  | 'server'
+  | 'cloud'
+  | 'user'
 
 export type ClientMessage =
   | { type: 'add'; element: ExcalidrawElement }
@@ -12,7 +22,18 @@ export type ClientMessage =
   | { type: 'cursor'; x: number; y: number; tool: Tool | null; name?: string }
 
 const MESSAGE_TYPES = ['add', 'update', 'remove', 'replace', 'cursor']
-const TOOLS = ['pen', 'rectangle', 'ellipse', 'arrow', 'text']
+const TOOLS = [
+  'pen',
+  'rectangle',
+  'ellipse',
+  'arrow',
+  'text',
+  'laptop',
+  'database',
+  'server',
+  'cloud',
+  'user',
+]
 
 export function encodeMessage(msg: ClientMessage): string {
   return JSON.stringify(msg)
