@@ -1,9 +1,10 @@
-import type { Point } from '../core/types'
+import type { ArrowheadStyle, Point } from '../core/types'
 import type { ExcalidrawElement, RectLikeType } from '../core/types'
-import { elbowRoute, LINE_HEIGHT, traceRoute } from '../core/geometry'
+import { elbowRoute, traceRoute } from '../core/geometry'
+import { TEXT_FONT_FAMILY, TEXT_LINE_HEIGHT } from '../core/textLayout'
 import type { Viewport } from './viewport'
 
-export const HANDWRITING_FONT = "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive"
+export const HANDWRITING_FONT = TEXT_FONT_FAMILY
 
 export function strokeStyle(el: ExcalidrawElement): string {
   return el.strokeColor
@@ -153,42 +154,89 @@ export function drawElement(ctx: CanvasRenderingContext2D, el: ExcalidrawElement
       traceRoute(ctx, route)
       ctx.stroke()
       ctx.setLineDash([])
-      const tip = route[route.length - 1]
-      const prev = route[route.length - 2]
-      drawArrowHead(ctx, tip, prev, el.strokeWidth)
-      break
-    }
-    case 'text': {
-      ctx.font = `${el.fontSize}px ${HANDWRITING_FONT}`
-      ctx.fillStyle = el.strokeColor
-      ctx.textBaseline = 'top'
-      const lines = el.text.split('\n')
-      for (let i = 0; i < lines.length; i++) {
-        ctx.fillText(lines[i], el.x, el.y + i * el.fontSize * LINE_HEIGHT)
+      const endStyle = el.endArrowhead === undefined ? 'arrow' : el.endArrowhead
+      if (endStyle) {
+        drawArrowHead(
+          ctx,
+          route[route.length - 1],
+          route[route.length - 2],
+          endStyle,
+          el.strokeWidth,
+        )
+      }
+      if (el.startArrowhead) {
+        drawArrowHead(ctx, route[0], route[1], el.startArrowhead, el.strokeWidth)
       }
       break
     }
+    case 'text': {
+      ctx.save()
+      ctx.font = `${el.fontSize}px ${HANDWRITING_FONT}`
+      ctx.fillStyle = el.strokeColor
+      ctx.textBaseline = 'top'
+      ctx.textAlign = el.textAlign ?? 'left'
+      const lines = el.text.split('\n')
+      const lineHeight = (el.lineHeight ?? TEXT_LINE_HEIGHT) * el.fontSize
+      const width =
+        typeof el.width === 'number'
+          ? el.width
+          : lines.reduce(
+              (w, line) => Math.max(w, ctx.measureText(line).width),
+              0,
+            )
+      const x =
+        ctx.textAlign === 'center'
+          ? el.x + width / 2
+          : ctx.textAlign === 'right'
+            ? el.x + width
+            : el.x
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], x, el.y + i * lineHeight)
+      }
+      ctx.restore()
+      break
+    }
   }
+}
+
+/** Head length grows with stroke width, like Excalidraw's markers. */
+export function arrowHeadSize(strokeWidth: number): number {
+  return 6 + 2 * strokeWidth
 }
 
 function drawArrowHead(
   ctx: CanvasRenderingContext2D,
   tip: Point,
   from: Point,
+  style: ArrowheadStyle,
   width: number,
 ): void {
   const angle = Math.atan2(tip.y - from.y, tip.x - from.x)
-  const size = Math.max(10, width * 4)
-  const spread = 0.4
-  const a1 = angle - Math.PI + spread
-  const a2 = angle + Math.PI - spread
+  const length = arrowHeadSize(width)
+  const half = length * 0.4
+  const baseX = tip.x - Math.cos(angle) * length
+  const baseY = tip.y - Math.sin(angle) * length
+  const nx = Math.cos(angle + Math.PI / 2) * half
+  const ny = Math.sin(angle + Math.PI / 2) * half
+  const p1 = { x: baseX + nx, y: baseY + ny }
+  const p2 = { x: baseX - nx, y: baseY - ny }
   ctx.fillStyle = ctx.strokeStyle as string
+  if (style === 'triangle') {
+    ctx.beginPath()
+    ctx.moveTo(tip.x, tip.y)
+    ctx.lineTo(p1.x, p1.y)
+    ctx.lineTo(p2.x, p2.y)
+    ctx.closePath()
+    ctx.fill()
+    return
+  }
+  // Classic open arrow: two strokes meeting at the tip.
   ctx.beginPath()
-  ctx.moveTo(tip.x, tip.y)
-  ctx.lineTo(tip.x + Math.cos(a1) * size, tip.y + Math.sin(a1) * size)
-  ctx.lineTo(tip.x + Math.cos(a2) * size, tip.y + Math.sin(a2) * size)
-  ctx.closePath()
-  ctx.fill()
+  ctx.moveTo(p1.x, p1.y)
+  ctx.lineTo(tip.x, tip.y)
+  ctx.lineTo(p2.x, p2.y)
+  ctx.lineWidth = width
+  ctx.stroke()
 }
 
 export function clearCanvas(ctx: CanvasRenderingContext2D, vp: Viewport, background: string): void {
@@ -229,7 +277,14 @@ export function renderShape(
   type: RectLikeType | 'arrow',
   a: Point,
   b: Point,
-  style: { strokeColor: string; strokeWidth: number; background: string; dashed?: boolean },
+  style: {
+    strokeColor: string
+    strokeWidth: number
+    background: string
+    dashed?: boolean
+    startArrowhead?: ArrowheadStyle | null
+    endArrowhead?: ArrowheadStyle | null
+  },
 ): void {
   if (type === 'arrow') {
     const route = elbowRoute(a, b)
@@ -242,9 +297,19 @@ export function renderShape(
     traceRoute(ctx, route)
     ctx.stroke()
     ctx.setLineDash([])
-    const tip = route[route.length - 1]
-    const prev = route[route.length - 2]
-    drawArrowHead(ctx, tip, prev, style.strokeWidth)
+    const endStyle = style.endArrowhead === undefined ? 'arrow' : style.endArrowhead
+    if (endStyle) {
+      drawArrowHead(
+        ctx,
+        route[route.length - 1],
+        route[route.length - 2],
+        endStyle,
+        style.strokeWidth,
+      )
+    }
+    if (style.startArrowhead) {
+      drawArrowHead(ctx, route[0], route[1], style.startArrowhead, style.strokeWidth)
+    }
     return
   }
   const x = Math.min(a.x, b.x)

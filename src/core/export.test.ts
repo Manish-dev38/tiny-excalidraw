@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toSVG } from './export'
 import { addElement, createScene } from './scene'
+import { textElement } from './testHelpers'
 import type { ExcalidrawElement } from './types'
 
 const rect = (id: string): ExcalidrawElement => ({
@@ -49,21 +50,40 @@ describe('toSVG', () => {
     expect(svg).toContain('<path')
     expect(svg).toContain('d="M 1 2 L 3 4"')
   })
-  it('renders text with escaped content', () => {
-    const text: ExcalidrawElement = {
-      id: 't1',
-      type: 'text',
-      x: 0,
-      y: 0,
+  it('renders text with escaped content and alignment', () => {
+    const text = textElement('t1', {
       text: 'a < b & c',
+      originalText: 'a < b & c',
       fontSize: 16,
-      strokeColor: '#000',
-      background: 'transparent',
-      strokeWidth: 1,
-    }
+      textAlign: 'center',
+      width: 200,
+    })
     const svg = toSVG(addElement(createScene(), text))
     expect(svg).toContain('<text')
     expect(svg).toContain('a &lt; b &amp; c')
+    expect(svg).toContain('text-anchor="middle"')
+  })
+
+  it('draws arrowheads, honouring an explicit none', () => {
+    const arrow = (endArrowhead: 'arrow' | 'triangle' | null): ExcalidrawElement => ({
+      id: 'a1',
+      type: 'arrow',
+      x: 0,
+      y: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+      strokeColor: '#000',
+      background: 'transparent',
+      strokeWidth: 2,
+      endArrowhead,
+    })
+    expect(toSVG(addElement(createScene(), arrow('triangle')))).toContain('<polygon')
+    expect(toSVG(addElement(createScene(), arrow('arrow')))).toContain('<path')
+    const none = toSVG(addElement(createScene(), arrow(null)))
+    expect(none).not.toContain('<polygon')
+    expect(none.match(/<path/g)?.length).toBe(1)
   })
 
   it('exports elbow arrows as routed paths, dashed on request', () => {

@@ -1,10 +1,14 @@
+import { migrateElements } from './migrate'
 import type { Scene } from './scene'
 import type { ElementType, ExcalidrawElement, Point } from './types'
 
 export const BOARD_FORMAT = 'tiny-excalidraw'
-/** v2 adds infrastructure shapes. v1 files still import (same element model). */
-export const BOARD_VERSION = 2
-const SUPPORTED_VERSIONS = [1, 2]
+/**
+ * v2 adds infrastructure shapes, v3 adds proportional arrow bindings, text
+ * metrics/alignment and arrowheads. Older files are migrated on import.
+ */
+export const BOARD_VERSION = 3
+const SUPPORTED_VERSIONS = [1, 2, 3]
 export const MAX_FILE_BYTES = 5 * 1024 * 1024
 export const MAX_ELEMENTS = 10_000
 export const MAX_POINTS = 50_000
@@ -117,11 +121,40 @@ function isPoint(value: unknown): value is Point {
 }
 
 function isBinding(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  // Legacy v1/v2 attachment.
+  if (typeof value.shapeId === 'string') {
+    return value.shapeId.length > 0 && value.shapeId.length <= 200
+  }
+  return (
+    typeof value.elementId === 'string' &&
+    value.elementId.length > 0 &&
+    value.elementId.length <= 200 &&
+    (value.mode === 'inside' || value.mode === 'orbit') &&
+    Array.isArray(value.fixedPoint) &&
+    value.fixedPoint.length === 2 &&
+    value.fixedPoint.every(isFiniteNumber)
+  )
+}
+
+function isBoundTextRef(value: unknown): boolean {
   return (
     isRecord(value) &&
-    typeof value.shapeId === 'string' &&
-    value.shapeId.length > 0 &&
-    value.shapeId.length <= 200
+    value.type === 'text' &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    value.id.length <= 200
+  )
+}
+
+function isArrowhead(value: unknown): boolean {
+  return value === null || value === 'arrow' || value === 'triangle'
+}
+
+function validBoundElements(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) && value.length <= 1000 && value.every(isBoundTextRef))
   )
 }
 
@@ -153,7 +186,10 @@ function validateElement(value: unknown): ExcalidrawElement {
     typeof value.background !== 'string' ||
     value.background.length > 100 ||
     !isFiniteNumber(value.strokeWidth) ||
-    (value.dashed !== undefined && typeof value.dashed !== 'boolean')
+    (value.dashed !== undefined && typeof value.dashed !== 'boolean') ||
+    !validBoundElements(value.boundElements) ||
+    (value.containerId !== undefined &&
+      (typeof value.containerId !== 'string' || value.containerId.length > 200))
   ) {
     throw new BoardFileError('This board contains an element with invalid properties.')
   }
@@ -194,7 +230,9 @@ function validateElement(value: unknown): ExcalidrawElement {
       }
       if (
         (value.startBinding !== undefined && !isBinding(value.startBinding)) ||
-        (value.endBinding !== undefined && !isBinding(value.endBinding))
+        (value.endBinding !== undefined && !isBinding(value.endBinding)) ||
+        (value.startArrowhead !== undefined && !isArrowhead(value.startArrowhead)) ||
+        (value.endArrowhead !== undefined && !isArrowhead(value.endArrowhead))
       ) {
         throw new BoardFileError('This board contains an arrow with an invalid attachment.')
       }
@@ -203,8 +241,22 @@ function validateElement(value: unknown): ExcalidrawElement {
       if (
         typeof value.text !== 'string' ||
         value.text.length > MAX_TEXT_LENGTH ||
+        (value.originalText !== undefined &&
+          (typeof value.originalText !== 'string' ||
+            value.originalText.length > MAX_TEXT_LENGTH)) ||
         !isFiniteNumber(value.fontSize) ||
-        value.fontSize <= 0
+        value.fontSize <= 0 ||
+        (value.width !== undefined && !isFiniteNumber(value.width)) ||
+        (value.height !== undefined && !isFiniteNumber(value.height)) ||
+        (value.autoResize !== undefined && typeof value.autoResize !== 'boolean') ||
+        (value.textAlign !== undefined &&
+          value.textAlign !== 'left' &&
+          value.textAlign !== 'center' &&
+          value.textAlign !== 'right') ||
+        (value.verticalAlign !== undefined &&
+          value.verticalAlign !== 'top' &&
+          value.verticalAlign !== 'middle') ||
+        (value.lineHeight !== undefined && !isFiniteNumber(value.lineHeight))
       ) {
         throw new BoardFileError('This board contains text with invalid properties.')
       }
@@ -225,7 +277,7 @@ export function parseSceneElements(value: unknown): Scene {
     seen.add(result.id)
     return result
   })
-  return { elements: validated }
+  return { elements: migrateElements(validated) }
 }
 
 /**

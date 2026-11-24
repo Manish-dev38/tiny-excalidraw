@@ -24,11 +24,41 @@ import { clipboard, cloneElements } from './clipboard'
 import { textEditOp } from './textEdit'
 import {
   bindArrowEnds,
-  clearArrowBindings,
-  detachRemoved,
   isBoxShape,
   resnapArrow,
 } from '../core/binding'
+import {
+  boundArrows,
+  boundText,
+  containerLabelWidth,
+  deletionSet,
+  isContainer,
+  reflowLabel,
+  withBoundText,
+  withoutBoundText,
+  type ContainerElement,
+} from '../core/containers'
+import {
+  HANDLE_HIT_SLOP,
+  HANDLE_SIZE,
+  groupFontScale,
+  handlePoints,
+  hitHandle,
+  resizeBox,
+  resizeElement,
+  resizeTextBox,
+  selectionBox,
+  type Box,
+  type HandlePoint,
+  type ResizeHandle,
+} from '../core/resize'
+import {
+  DEFAULT_FONT_SIZE,
+  MIN_TEXT_WIDTH,
+  TEXT_FONT_FAMILY,
+  TEXT_LINE_HEIGHT,
+  textBlock,
+} from '../core/textLayout'
 import { makeArrowElement, makePenElement, makeShapeElement, makeTextElement } from './factories'
 import type { DrawStyle } from './factories'
 import { startPeerSession, type PeerSession } from '../collab/peer'
@@ -36,7 +66,7 @@ import type { ClientMessage } from '../collab/protocol'
 import { clearCanvas, drawElement, renderPath, renderShape } from './render'
 import { buildToolbar } from './toolbar'
 import { buildProperties } from './properties'
-import type { PropertiesState, StyleValues } from './properties'
+import type { PropertiesState, StyleKey, StyleValues } from './properties'
 import { buildChrome } from './chrome'
 import type { Chrome, ChromeState } from './chrome'
 import {
@@ -63,6 +93,11 @@ function genId(): string {
   return `el-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** Structural comparison used to skip no-op update ops. */
+function sameElement(a: ExcalidrawElement, b: ExcalidrawElement): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 type Gesture =
   | { kind: 'pen'; points: Point[] }
   | {
@@ -78,10 +113,19 @@ type Gesture =
       kind: 'move'
       /** One entry per selected element, as they were when the move started. */
       items: { id: string; original: ExcalidrawElement }[]
-      /** Arrows attached to a moved shape, snapped live during the drag. */
-      attached: { id: string; original: ArrowElement }[]
+      /** Bound labels/arrows that follow the moved containers. */
+      followups: { id: string; original: ExcalidrawElement }[]
       startScene: Point
       lastScene: Point
+      moved: boolean
+    }
+  | {
+      kind: 'resize'
+      handle: ResizeHandle
+      items: { id: string; original: ExcalidrawElement }[]
+      followups: { id: string; original: ExcalidrawElement }[]
+      startBox: Box
+      box: Box
       moved: boolean
     }
   | null
@@ -108,6 +152,10 @@ export class CanvasApp {
     background: 'transparent',
     strokeWidth: 2,
     dashed: false,
+    fontSize: DEFAULT_FONT_SIZE,
+    textAlign: 'left',
+    startArrowhead: null,
+    endArrowhead: 'arrow',
   }
   private theme: Theme = 'light'
   private gesture: Gesture = null
@@ -156,6 +204,10 @@ export class CanvasApp {
       onBackground: (color) => this.setStyle({ background: color }),
       onStrokeWidth: (width) => this.setStyle({ strokeWidth: width }),
       onDashed: (dashed) => this.setStyle({ dashed }),
+      onFontSize: (fontSize) => this.setStyle({ fontSize }),
+      onTextAlign: (textAlign) => this.setStyle({ textAlign }),
+      onStartArrowhead: (startArrowhead) => this.setStyle({ startArrowhead }),
+      onEndArrowhead: (endArrowhead) => this.setStyle({ endArrowhead }),
     })
     this.panelUpdate = panel.update
 
@@ -299,19 +351,87 @@ export class CanvasApp {
 
   private panelState(): PropertiesState {
     const selection = this.selectedElement()
+    const els = this.selectedElements()
+    const defaults = this.defaultStyleValues()
+    const values: StyleValues = { ...defaults }
+    const mixed = new Set<StyleKey>()
+
+    const aggregate = <T>(key: StyleKey, list: T[], fallback: T): void => {
+      if (list.length === 0) {
+        values[key] = fallback as never
+        return
+      }
+      const first = list[0]
+      const differs = list.some((value) => value !== first)
+      values[key] = (first ?? fallback) as never
+      if (differs) mixed.add(key)
+    }
+
+    if (els.length > 0) {
+      aggregate('strokeColor', els.map((el) => el.strokeColor), defaults.strokeColor)
+      aggregate('background', els.map((el) => el.background), defaults.background)
+      aggregate('strokeWidth', els.map((el) => el.strokeWidth), defaults.strokeWidth)
+      aggregate('dashed', els.map((el) => el.dashed ?? false), defaults.dashed)
+
+      const textHosts = els
+        .map((el) => this.textHostFor(el))
+        .filter((el): el is TextElement => !!el)
+      aggregate('fontSize', textHosts.map((el) => el.fontSize), defaults.fontSize)
+      aggregate('textAlign', textHosts.map((el) => el.textAlign), defaults.textAlign)
+
+      const arrows = els.filter((el): el is ArrowElement => el.type === 'arrow')
+      aggregate(
+        'startArrowhead',
+        arrows.map((el) => el.startArrowhead ?? null),
+        defaults.startArrowhead,
+      )
+      aggregate(
+        'endArrowhead',
+        arrows.map((el) => el.endArrowhead ?? 'arrow'),
+        defaults.endArrowhead,
+      )
+    }
+
     return {
       tool: this.tool,
       selection,
+      selectionCount: els.length,
       mode: this.panelMode,
-      values: selection
-        ? {
-            strokeColor: selection.strokeColor,
-            background: selection.background,
-            strokeWidth: selection.strokeWidth,
-            dashed: selection.dashed ?? false,
-          }
-        : { ...this.style },
+      values,
+      mixed,
     }
+  }
+
+  private defaultStyleValues(): StyleValues {
+    return {
+      strokeColor: this.style.strokeColor,
+      background: this.style.background,
+      strokeWidth: this.style.strokeWidth,
+      dashed: this.style.dashed,
+      fontSize: this.style.fontSize ?? DEFAULT_FONT_SIZE,
+      textAlign: this.style.textAlign ?? 'left',
+      startArrowhead: this.style.startArrowhead ?? null,
+      endArrowhead: this.style.endArrowhead ?? 'arrow',
+    }
+  }
+
+  /** Text element that owns a selection's font/alignment values. */
+  private textHostFor(el: ExcalidrawElement): TextElement | null {
+    if (el.type === 'text') return el
+    if (!isContainer(el)) return null
+    return boundText(this.scene.elements, el.id)
+  }
+
+  /** Selection plus the labels owned by selected shapes/arrows. */
+  private styleTargets(key: StyleKey): ExcalidrawElement[] {
+    const els = this.selectedElements()
+    if (key !== 'fontSize' && key !== 'textAlign') return els
+    const targets: ExcalidrawElement[] = []
+    for (const el of els) {
+      const host = this.textHostFor(el)
+      if (host) targets.push(host)
+    }
+    return targets
   }
 
   private chromeState(): ChromeState {
@@ -358,10 +478,15 @@ export class CanvasApp {
       this.syncUi()
       return
     }
-    const key = Object.keys(patch)[0] as keyof StyleValues
-    const ops: Op[] = selection
-      .filter((el) => acceptsStyle(el.type, key))
-      .map((el): Op => ({ type: 'update', id: el.id, prev: { ...el }, next: patch }))
+    const key = Object.keys(patch)[0] as StyleKey
+    const value = patch[key]
+    const targets = this.styleTargets(key).filter((el) => acceptsStyle(el.type, key))
+    const ops: Op[] = targets.map((el): Op => ({
+      type: 'update',
+      id: el.id,
+      prev: { ...el },
+      next: this.stylePatchFor(el, key, value),
+    }))
     if (ops.length === 0) {
       this.render()
       this.syncUi()
@@ -372,6 +497,33 @@ export class CanvasApp {
     this.history = record(this.history, op)
     this.broadcastOp(op)
     this.afterChange()
+  }
+
+  /** Builds the field patch for one style change, re-wrapping text if needed. */
+  private stylePatchFor(
+    el: ExcalidrawElement,
+    key: StyleKey,
+    value: StyleValues[StyleKey] | undefined,
+  ): Partial<ExcalidrawElement> {
+    if (el.type === 'text' && key === 'fontSize') {
+      const fontSize = typeof value === 'number' ? value : el.fontSize
+      const maxWidth = el.containerId
+        ? el.width
+        : el.autoResize
+          ? null
+          : el.width
+      const block = textBlock(el.originalText ?? el.text, fontSize, {
+        maxWidth,
+        lineHeight: el.lineHeight ?? TEXT_LINE_HEIGHT,
+      })
+      return {
+        fontSize,
+        text: block.lines.join('\n'),
+        width: maxWidth === null ? block.width : Math.max(MIN_TEXT_WIDTH, maxWidth),
+        height: block.height,
+      }
+    }
+    return { [key]: value } as Partial<ExcalidrawElement>
   }
 
   private center(): Point {
@@ -477,24 +629,43 @@ export class CanvasApp {
   }
 
   private drawSelection() {
-    for (const el of this.selectedElements()) {
-      const b = bboxOf(el)
-      const pad = 4
-      this.ctx.save()
-      this.ctx.strokeStyle = '#1971c2'
-      this.ctx.fillStyle = 'rgba(25, 113, 194, 0.07)'
-      this.ctx.lineWidth = 1 / this.viewport.zoom
-      this.ctx.setLineDash([4 / this.viewport.zoom, 3 / this.viewport.zoom])
-      const x = b.minX - pad
-      const y = b.minY - pad
-      const w = b.maxX - b.minX + pad * 2
-      const h = b.maxY - b.minY + pad * 2
+    const els = this.selectedElements()
+    if (els.length === 0) return
+    const box = selectionBox(els)
+    const zoom = this.viewport.zoom
+    this.ctx.save()
+    this.ctx.strokeStyle = '#1971c2'
+    this.ctx.fillStyle = 'rgba(25, 113, 194, 0.06)'
+    this.ctx.lineWidth = 1 / zoom
+    this.ctx.setLineDash([4 / zoom, 3 / zoom])
+    this.ctx.beginPath()
+    this.ctx.rect(box.x, box.y, box.width, box.height)
+    this.ctx.fill()
+    this.ctx.stroke()
+    this.ctx.restore()
+
+    // Arrows have no resize handles (resizing happens through their shapes).
+    if (els.every((el) => el.type === 'arrow')) return
+    const textOnly = els.length === 1 && els[0].type === 'text'
+    const size = HANDLE_SIZE / zoom
+    this.ctx.save()
+    this.ctx.fillStyle = '#ffffff'
+    this.ctx.strokeStyle = '#1971c2'
+    this.ctx.lineWidth = 1.5 / zoom
+    for (const handle of handlePoints(box, textOnly)) {
       this.ctx.beginPath()
-      this.ctx.rect(x, y, w, h)
+      this.ctx.rect(handle.x - size / 2, handle.y - size / 2, size, size)
       this.ctx.fill()
       this.ctx.stroke()
-      this.ctx.restore()
     }
+    this.ctx.restore()
+  }
+
+  /** Current resize handles for the selection, if it has any. */
+  private selectionHandles(): HandlePoint[] {
+    const els = this.selectedElements()
+    if (els.length === 0 || els.every((el) => el.type === 'arrow')) return []
+    return handlePoints(selectionBox(els), els.length === 1 && els[0].type === 'text')
   }
 
   private bindEvents() {
@@ -506,10 +677,13 @@ export class CanvasApp {
     c.addEventListener('dblclick', (e) => {
       if (this.isEditingText()) return
       const hit = hitTestTop(this.scene.elements, this.toScene(e))
-      if (hit?.type === 'text') {
-        e.preventDefault()
+      if (!hit) return
+      e.preventDefault()
+      if (hit.type === 'text') {
         this.beginText({ x: hit.x, y: hit.y }, hit)
+        return
       }
+      if (isContainer(hit)) this.editContainerLabel(hit)
     })
     c.addEventListener('wheel', (e) => {
       e.preventDefault()
@@ -552,6 +726,11 @@ export class CanvasApp {
         if (el?.type === 'text') {
           e.preventDefault()
           this.beginText({ x: el.x, y: el.y }, el)
+          return
+        }
+        if (el && isContainer(el)) {
+          e.preventDefault()
+          this.editContainerLabel(el)
           return
         }
       }
@@ -683,7 +862,33 @@ export class CanvasApp {
     }
     const p = this.toScene(e)
     if (this.tool === 'select') {
-      const hit = hitTestTop(this.scene.elements, p)
+      const handle = hitHandle(
+        this.selectionHandles(),
+        p,
+        HANDLE_HIT_SLOP / this.viewport.zoom,
+      )
+      if (handle && !e.shiftKey) {
+        const els = this.selectedElements()
+        const items = els.map((el) => ({ id: el.id, original: el }))
+        const box = selectionBox(els)
+        this.gesture = {
+          kind: 'resize',
+          handle: handle.handle,
+          items,
+          followups: this.followupsFor(items),
+          startBox: box,
+          box,
+          moved: false,
+        }
+        this.canvas.style.cursor = handle.cursor
+        this.syncUi()
+        this.render()
+        this.canvas.setPointerCapture(e.pointerId)
+        return
+      }
+
+      const rawHit = hitTestTop(this.scene.elements, p)
+      const hit = rawHit ? this.resolveSelectable(rawHit) : null
       if (hit) {
         if (e.shiftKey) {
           // Shift-click toggles membership; no move gesture on a toggle.
@@ -699,11 +904,10 @@ export class CanvasApp {
           this.selectedIds = [hit.id]
         }
         const items = this.selectedElements().map((el) => ({ id: el.id, original: el }))
-        const attached = this.attachedArrowsTo(items)
         this.gesture = {
           kind: 'move',
           items,
-          attached,
+          followups: this.followupsFor(items),
           startScene: p,
           lastScene: p,
           moved: false,
@@ -752,8 +956,9 @@ export class CanvasApp {
 
   private onPointerMove(e: PointerEvent) {
     if (!this.gesture) {
+      const p = this.toScene(e)
+      this.updateHoverCursor(p)
       if (this.peer.status === 'connected') {
-        const p = this.toScene(e)
         this.peer.send({
           type: 'cursor',
           x: p.x,
@@ -789,28 +994,123 @@ export class CanvasApp {
       const dx = p.x - g.startScene.x
       const dy = p.y - g.startScene.y
       if (Math.hypot(dx, dy) >= MIN_DRAG) g.moved = true
-      if (g.moved) {
-        const movedShapes = new Map<string, RectLikeElement>()
-        for (const { id, original } of g.items) {
-          const moved = translateElement(original, { dx, dy })
-          this.scene = updateElement(this.scene, id, moved as Partial<ExcalidrawElement>)
-          if (isBoxShape(moved)) movedShapes.set(id, moved)
-        }
-        // Arrows attached to a moved shape follow it live.
-        for (const { id, original } of g.attached) {
-          const snapped = resnapArrow(original, movedShapes) ?? original
-          this.scene = updateElement(this.scene, id, snapped as Partial<ExcalidrawElement>)
-        }
-      }
+      if (g.moved) this.applyMove(g, dx, dy)
       g.lastScene = p
+    } else if (this.gesture.kind === 'resize') {
+      const g = this.gesture
+      this.applyResize(g, p, e.shiftKey, e.altKey)
+      g.moved = true
     }
     this.render()
+  }
+
+  /** Live move: translate the selection, then reflow labels and bound arrows. */
+  private applyMove(
+    g: Extract<NonNullable<Gesture>, { kind: 'move' }>,
+    dx: number,
+    dy: number,
+  ) {
+    const movedShapes = new Map<string, RectLikeElement>()
+    for (const { id, original } of g.items) {
+      const moved = translateElement(original, { dx, dy })
+      this.scene = updateElement(this.scene, id, moved as Partial<ExcalidrawElement>)
+      if (isBoxShape(moved)) movedShapes.set(id, moved)
+    }
+    for (const { id, original } of g.followups) {
+      if (original.type === 'text' && original.containerId) {
+        const container = this.containerAfterMove(original.containerId, g, dx, dy)
+        if (!container) continue
+        const next = reflowLabel(original, container)
+        this.scene = updateElement(this.scene, id, next as Partial<ExcalidrawElement>)
+        continue
+      }
+      if (original.type === 'arrow') {
+        const snapped = resnapArrow(original, movedShapes)
+        if (snapped) {
+          this.scene = updateElement(this.scene, id, this.arrowPatch(snapped))
+        }
+      }
+    }
+  }
+
+  private containerAfterMove(
+    containerId: string,
+    g: Extract<NonNullable<Gesture>, { kind: 'move' }>,
+    dx: number,
+    dy: number,
+  ): ContainerElement | null {
+    const item = g.items.find((entry) => entry.id === containerId)
+    if (item) {
+      const moved = translateElement(item.original, { dx, dy })
+      return isContainer(moved) ? moved : null
+    }
+    return null
+  }
+
+  /** Live resize: scale selected geometry, reflow labels, resnap bound arrows. */
+  private applyResize(
+    g: Extract<NonNullable<Gesture>, { kind: 'resize' }>,
+    p: Point,
+    shift: boolean,
+    alt: boolean,
+  ) {
+    const singleText =
+      g.items.length === 1 && g.items[0].original.type === 'text'
+    const nextBox = singleText
+      ? resizeTextBox(g.startBox, g.handle, p)
+      : resizeBox(g.startBox, g.handle, p, {
+          shift,
+          alt,
+          minWidth: singleText ? MIN_TEXT_WIDTH : undefined,
+        })
+    g.box = nextBox
+    const fontScale = g.items.length > 1 ? groupFontScale(g.startBox, nextBox) : 1
+    const containers = new Map<string, ContainerElement>()
+    const shapes = new Map<string, RectLikeElement>()
+
+    for (const { id, original } of g.items) {
+      const next = resizeElement(original, g.startBox, nextBox, {
+        fontScale,
+        group: g.items.length > 1,
+      })
+      this.scene = updateElement(this.scene, id, next as Partial<ExcalidrawElement>)
+      if (isContainer(next)) containers.set(id, next)
+      if (isBoxShape(next)) shapes.set(id, next)
+    }
+
+    for (const { id, original } of g.followups) {
+      if (original.type === 'text' && original.containerId) {
+        const container = containers.get(original.containerId)
+        if (!container) continue
+        const next = reflowLabel(original, container)
+        this.scene = updateElement(this.scene, id, next as Partial<ExcalidrawElement>)
+      } else if (original.type === 'arrow') {
+        const snapped = resnapArrow(original, shapes)
+        if (snapped) {
+          this.scene = updateElement(this.scene, id, this.arrowPatch(snapped))
+        }
+      }
+    }
+  }
+
+  private updateHoverCursor(p: Point) {
+    if (this.tool !== 'select' || this.isEditingText()) {
+      this.canvas.style.cursor = ''
+      return
+    }
+    const handle = hitHandle(
+      this.selectionHandles(),
+      p,
+      HANDLE_HIT_SLOP / this.viewport.zoom,
+    )
+    this.canvas.style.cursor = handle ? handle.cursor : ''
   }
 
   private onPointerUp() {
     const g = this.gesture
     this.gesture = null
     this.canvas.classList.remove('is-panning')
+    this.canvas.style.cursor = ''
     if (!g) return
     if (g.kind === 'pan') return
     if (g.kind === 'pen') {
@@ -836,43 +1136,90 @@ export class CanvasApp {
     } else if (g.kind === 'marquee') {
       if (Math.hypot(g.current.x - g.start.x, g.current.y - g.start.y) >= MIN_DRAG) {
         const hits = elementsInRect(this.scene.elements, g.start, g.current)
-        this.selectedIds = hits.map((el) => el.id)
+        this.selectedIds = this.normalizeSelection(hits.map((el) => el.id))
         this.syncUi()
       }
     } else if (g.kind === 'move') {
-      if (g.moved) {
-        const dx = g.lastScene.x - g.startScene.x
-        const dy = g.lastScene.y - g.startScene.y
-        const ops: Op[] = g.items.map(({ id, original }): Op => {
-          const moved = translateElement(original, { dx, dy })
-          // Moving an arrow itself detaches it from any shape.
-          const next = moved.type === 'arrow' ? clearArrowBindings(moved) : moved
-          return {
-            type: 'update',
-            id,
-            prev: original,
-            next: next.type === 'arrow' ? this.arrowPatch(next) : next,
-          }
-        })
-        // Attached arrows that followed the moved shapes are part of the step.
-        for (const { id, original } of g.attached) {
-          const final = getElement(this.scene, id)
-          if (!final || final === original) continue
-          ops.push({
-            type: 'update',
-            id,
-            prev: original,
-            next: final as Partial<ExcalidrawElement>,
-          })
-        }
-        const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
-        this.scene = applyOp(this.scene, op)
-        this.history = record(this.history, op)
-        this.broadcastOp(op)
-        this.afterChange()
-      }
+      if (g.moved) this.commitMove(g)
+    } else if (g.kind === 'resize') {
+      if (g.moved) this.commitResize(g)
     }
     this.render()
+  }
+
+  private commitMove(g: Extract<NonNullable<Gesture>, { kind: 'move' }>) {
+    const dx = g.lastScene.x - g.startScene.x
+    const dy = g.lastScene.y - g.startScene.y
+    const movingIds = new Set(g.items.map((item) => item.id))
+    const ops: Op[] = g.items.map(({ id, original }): Op => {
+      let next = translateElement(original, { dx, dy })
+      if (next.type === 'arrow') {
+        // Keep bindings that follow the selection; detach from everything else.
+        const detached = { ...next }
+        if (detached.startBinding && !movingIds.has(detached.startBinding.elementId)) {
+          delete detached.startBinding
+        }
+        if (detached.endBinding && !movingIds.has(detached.endBinding.elementId)) {
+          delete detached.endBinding
+        }
+        next = detached
+      }
+      return {
+        type: 'update',
+        id,
+        prev: original,
+        next: next.type === 'arrow' ? this.arrowPatch(next) : next,
+      }
+    })
+    for (const { id, original } of g.followups) {
+      const final = getElement(this.scene, id)
+      if (!final || sameElement(original, final)) continue
+      ops.push({
+        type: 'update',
+        id,
+        prev: original,
+        next: final.type === 'arrow' ? this.arrowPatch(final) : final,
+      })
+    }
+    this.commitOps(ops, false)
+  }
+
+  private commitResize(g: Extract<NonNullable<Gesture>, { kind: 'resize' }>) {
+    const ops: Op[] = []
+    for (const { id, original } of g.items) {
+      const final = getElement(this.scene, id)
+      if (!final || sameElement(original, final)) continue
+      ops.push({
+        type: 'update',
+        id,
+        prev: original,
+        next: final.type === 'arrow' ? this.arrowPatch(final) : final,
+      })
+    }
+    for (const { id, original } of g.followups) {
+      const final = getElement(this.scene, id)
+      if (!final || sameElement(original, final)) continue
+      ops.push({
+        type: 'update',
+        id,
+        prev: original,
+        next: final.type === 'arrow' ? this.arrowPatch(final) : final,
+      })
+    }
+    this.commitOps(ops, false)
+  }
+
+  /** Applies and records a set of ops as one undoable step. */
+  private commitOps(ops: Op[], keepSelection: boolean) {
+    if (ops.length === 0) return
+    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
+    this.scene = applyOp(this.scene, op)
+    this.history = record(this.history, op)
+    this.broadcastOp(op)
+    if (!keepSelection) {
+      this.selectedIds = this.selectedIds.filter((id) => !!getElement(this.scene, id))
+    }
+    this.afterChange()
   }
 
   private commitAdd(element: import('../core/types').ExcalidrawElement) {
@@ -896,52 +1243,93 @@ export class CanvasApp {
   }
 
   private commitRemove(id: string) {
-    const el = getElement(this.scene, id)
-    if (!el) return
-    const ops: Op[] = [
-      { type: 'remove', element: el },
-      ...this.detachArrowsFor(new Set([id])),
-    ]
-    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
-    this.scene = applyOp(this.scene, op)
-    this.history = record(this.history, op)
-    this.broadcastOp(op)
-    this.afterChange()
+    if (!getElement(this.scene, id)) return
+    this.applyRemoval(deletionSet(this.scene.elements, [id]))
   }
 
   /** Removes the whole selection as one undoable step. */
   private removeSelected() {
     const els = this.selectedElements()
     if (els.length === 0) return
-    const ids = new Set(els.map((el) => el.id))
-    const ops: Op[] = [
-      ...els.map((el): Op => ({ type: 'remove', element: el })),
-      ...this.detachArrowsFor(ids),
-    ]
-    const op: Op = ops.length === 1 ? ops[0] : { type: 'batch', ops }
-    this.scene = applyOp(this.scene, op)
-    this.history = record(this.history, op)
-    this.broadcastOp(op)
-    this.selectedIds = []
-    this.afterChange()
+    this.applyRemoval(deletionSet(this.scene.elements, els.map((el) => el.id)))
   }
 
-  /** Arrows not being removed that point at one of the removed shapes. */
-  private detachArrowsFor(removedIds: ReadonlySet<string>): Op[] {
+  /**
+   * Removes elements plus their labels/arrows, and clears container references
+   * that point at deleted labels. The whole cascade is one undoable step.
+   */
+  private applyRemoval(doomed: ReadonlySet<string>) {
     const ops: Op[] = []
     for (const el of this.scene.elements) {
-      if (el.type !== 'arrow' || removedIds.has(el.id)) continue
-      const next = detachRemoved(el, removedIds)
-      if (next) {
-        ops.push({
-          type: 'update',
-          id: el.id,
-          prev: el,
-          next: this.arrowPatch(next),
-        })
+      if (doomed.has(el.id)) {
+        ops.push({ type: 'remove', element: el })
+        continue
+      }
+      if (!isContainer(el) || !el.boundElements) continue
+      const dropped = el.boundElements.filter((ref) => doomed.has(ref.id))
+      if (dropped.length === 0) continue
+      let next: ContainerElement = el
+      for (const ref of dropped) next = withoutBoundText(next, ref.id)
+      ops.push({ type: 'update', id: el.id, prev: el, next })
+    }
+    this.commitOps(ops, false)
+  }
+
+  /** Labels and bound arrows that follow a moved/resized selection. */
+  private followupsFor(
+    items: { id: string; original: ExcalidrawElement }[],
+  ): { id: string; original: ExcalidrawElement }[] {
+    const selected = new Set(items.map((item) => item.id))
+    const out = new Map<string, ExcalidrawElement>()
+    for (const { original } of items) {
+      if (!isContainer(original)) continue
+      const label = boundText(this.scene.elements, original.id)
+      if (label && !selected.has(label.id)) out.set(label.id, label)
+      if (!isBoxShape(original)) continue
+      for (const arrow of boundArrows(this.scene.elements, original.id)) {
+        if (!selected.has(arrow.id)) out.set(arrow.id, arrow)
       }
     }
-    return ops
+    return [...out].map(([id, original]) => ({ id, original }))
+  }
+
+  /** Clicking a label selects its container, like Excalidraw. */
+  private resolveSelectable(el: ExcalidrawElement): ExcalidrawElement {
+    if (el.type === 'text' && el.containerId) {
+      const container = getElement(this.scene, el.containerId)
+      if (container && isContainer(container)) return container
+    }
+    return el
+  }
+
+  /** Replaces selected labels with their containers and preserves z-order. */
+  private normalizeSelection(ids: string[]): string[] {
+    const set = new Set(ids)
+    for (const id of [...set]) {
+      const el = getElement(this.scene, id)
+      if (el?.type === 'text' && el.containerId) {
+        const container = getElement(this.scene, el.containerId)
+        if (container && isContainer(container)) {
+          set.delete(id)
+          set.add(container.id)
+        }
+      }
+    }
+    return this.scene.elements.filter((el) => set.has(el.id)).map((el) => el.id)
+  }
+
+  private editContainerLabel(container: ContainerElement) {
+    this.selectedIds = [container.id]
+    const label = boundText(this.scene.elements, container.id)
+    if (label) {
+      this.beginText({ x: label.x, y: label.y }, label)
+      return
+    }
+    this.beginText(
+      { x: container.x, y: container.y },
+      undefined,
+      container,
+    )
   }
 
   /**
@@ -950,26 +1338,6 @@ export class CanvasApp {
    */
   private arrowPatch(arrow: ArrowElement): Partial<ExcalidrawElement> {
     return { ...arrow, startBinding: arrow.startBinding, endBinding: arrow.endBinding }
-  }
-
-  /** Snapshot of arrows bound to a shape in the current move selection. */
-  private attachedArrowsTo(
-    items: { id: string; original: ExcalidrawElement }[],
-  ): { id: string; original: ArrowElement }[] {
-    const movingShapeIds = new Set(
-      items.filter((it) => isBoxShape(it.original)).map((it) => it.id),
-    )
-    if (movingShapeIds.size === 0) return []
-    const movingIds = new Set(items.map((it) => it.id))
-    return this.scene.elements
-      .filter(
-        (el): el is ArrowElement =>
-          el.type === 'arrow' &&
-          !movingIds.has(el.id) &&
-          ((!!el.startBinding && movingShapeIds.has(el.startBinding.shapeId)) ||
-            (!!el.endBinding && movingShapeIds.has(el.endBinding.shapeId))),
-      )
-      .map((el) => ({ id: el.id, original: el }))
   }
 
   /** Copies the selection to the internal clipboard. Returns false if empty. */
@@ -1004,7 +1372,7 @@ export class CanvasApp {
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
     this.broadcastOp(op)
-    this.selectedIds = els.map((el) => el.id)
+    this.selectedIds = this.normalizeSelection(els.map((el) => el.id))
     this.tool = 'select'
     this.updateCursor()
     this.afterChange()
@@ -1101,22 +1469,49 @@ export class CanvasApp {
     }
   }
 
-  private beginText(at: Point, existing?: TextElement) {
+  /**
+   * Opens the inline editor. Text elements edit in place; containers without a
+   * label get a new bound label positioned by `layoutLabel`.
+   */
+  private beginText(at: Point, existing?: TextElement, container?: ContainerElement) {
     // Never stack editors: commit whatever is open first.
     this.finishText?.(true)
     const rect = this.canvas.getBoundingClientRect()
-    const anchor = existing ? { x: existing.x, y: existing.y } : at
+    const fontSize = existing?.fontSize ?? this.style.fontSize ?? DEFAULT_FONT_SIZE
+    const align =
+      existing?.textAlign ??
+      (container ? 'center' : (this.style.textAlign ?? 'left'))
+    const provisional =
+      !existing && container ? this.newLabel(container, '', fontSize, align) : null
+    const anchor = existing
+      ? { x: existing.x, y: existing.y }
+      : provisional
+        ? { x: provisional.x, y: provisional.y }
+        : at
+    const fixedWidth = existing
+      ? existing.containerId || existing.autoResize === false
+        ? Math.max(MIN_TEXT_WIDTH, existing.width)
+        : null
+      : provisional
+        ? provisional.width
+        : null
     const screen = sceneToScreen(this.viewport, anchor)
-    const fontSize = existing ? existing.fontSize : 24
+    const zoom = this.viewport.zoom
+
     const ta = document.createElement('textarea')
     ta.className = 'editing'
     ta.rows = 1
     ta.spellcheck = false
     ta.style.left = `${rect.left + screen.x}px`
     ta.style.top = `${rect.top + screen.y}px`
-    ta.style.fontSize = `${fontSize * this.viewport.zoom}px`
+    ta.style.fontSize = `${fontSize * zoom}px`
+    ta.style.fontFamily = TEXT_FONT_FAMILY
+    ta.style.lineHeight = String(TEXT_LINE_HEIGHT)
+    ta.style.textAlign = align
     ta.style.color = existing ? existing.strokeColor : this.style.strokeColor
-    if (existing) ta.value = existing.text
+    ta.style.minWidth = fixedWidth === null ? `${MIN_TEXT_WIDTH * zoom}px` : '0px'
+    if (fixedWidth !== null) ta.style.width = `${fixedWidth * zoom + 10}px`
+    ta.value = existing ? (existing.originalText ?? existing.text) : ''
     this.container.appendChild(ta)
 
     let done = false
@@ -1124,35 +1519,38 @@ export class CanvasApp {
     const grow = () => {
       ta.style.height = 'auto'
       ta.style.height = `${ta.scrollHeight}px`
+      if (fixedWidth === null) {
+        ta.style.width = '0px'
+        ta.style.width = `${Math.max(MIN_TEXT_WIDTH * zoom, ta.scrollWidth + 10)}px`
+      }
     }
 
     const finish = (keep: boolean) => {
       if (done) return
       done = true
       if (this.finishText === finish) this.finishText = null
-      const text = ta.value.trim()
+      const raw = ta.value
       ta.remove()
       this.syncUi()
       if (existing) {
-        if (keep) this.commitTextEdit(existing, text)
+        if (keep) this.commitTextEdit(existing, raw)
         this.render()
         return
       }
+      const text = raw.trim()
       if (keep && text) {
-        const el = makeTextElement(genId(), at, text, fontSize, this.style)
-        this.commitCreated(el)
+        if (container) this.commitLabel(container, text, fontSize, align)
+        else this.commitCreated(makeTextElement(genId(), at, text, fontSize, this.style))
       }
       this.render()
     }
 
     ta.addEventListener('input', grow)
     ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter inserts a newline like Excalidraw; Escape/click-away commit.
+      if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
         e.preventDefault()
         finish(true)
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        finish(false)
       }
     })
     ta.addEventListener('blur', () => finish(true))
@@ -1167,24 +1565,88 @@ export class CanvasApp {
     this.syncUi()
   }
 
-  /** Applies an inline edit to an existing text element. */
-  private commitTextEdit(existing: TextElement, text: string) {
-    this.selectedIds = [existing.id]
+  /** A new label laid out inside its container (used for editor placement). */
+  private newLabel(
+    container: ContainerElement,
+    raw: string,
+    fontSize: number,
+    align: TextElement['textAlign'],
+  ): TextElement {
+    const el = makeTextElement(genId(), { x: container.x, y: container.y }, raw, fontSize, {
+      ...this.style,
+      textAlign: align,
+    })
+    el.containerId = container.id
+    el.autoResize = false
+    el.textAlign = align
+    el.verticalAlign = 'middle'
+    return reflowLabel(el, container)
+  }
+
+  /** Adds a new label to a container as one undoable step. */
+  private commitLabel(
+    container: ContainerElement,
+    raw: string,
+    fontSize: number,
+    align: TextElement['textAlign'],
+  ) {
+    const label = this.newLabel(container, raw, fontSize, align)
+    const updated = withBoundText(container, label.id)
+    const ops: Op[] = [
+      { type: 'add', element: label },
+      { type: 'update', id: container.id, prev: container, next: updated },
+    ]
+    this.scene = applyOp(this.scene, { type: 'batch', ops })
+    this.history = record(this.history, ops.length === 1 ? ops[0] : { type: 'batch', ops })
+    this.broadcastOp(ops.length === 1 ? ops[0] : { type: 'batch', ops })
+    this.selectedIds = [container.id]
     this.tool = 'select'
     this.updateCursor()
-    const op = textEditOp(existing, text)
+    this.afterChange()
+  }
+
+  /** Applies an inline edit to an existing text element. */
+  private commitTextEdit(existing: TextElement, raw: string) {
+    this.tool = 'select'
+    this.updateCursor()
+    const container = existing.containerId
+      ? getElement(this.scene, existing.containerId)
+      : null
+    const containerEl = container && isContainer(container) ? container : null
+    const op = textEditOp(existing, raw, {
+      maxWidth: containerEl ? containerLabelWidth(containerEl) : undefined,
+    })
     if (!op) {
+      this.selectedIds = containerEl ? [containerEl.id] : [existing.id]
       this.syncUi()
       return
+    }
+    if (op.type === 'remove') {
+      this.selectedIds = containerEl ? [containerEl.id] : []
+      this.applyRemoval(deletionSet(this.scene.elements, [existing.id]))
+      return
+    }
+    if (op.type !== 'update') {
+      this.selectedIds = containerEl ? [containerEl.id] : [existing.id]
+      this.syncUi()
+      return
+    }
+    if (containerEl) {
+      const nextText = { ...existing, ...op.next } as TextElement
+      const laid = reflowLabel(nextText, containerEl)
+      op.next = {
+        ...op.next,
+        text: laid.text,
+        x: laid.x,
+        y: laid.y,
+        width: laid.width,
+        height: laid.height,
+      }
     }
     this.scene = applyOp(this.scene, op)
     this.history = record(this.history, op)
     this.broadcastOp(op)
-    if (op.type === 'remove') {
-      this.selectedIds = []
-      this.syncUi()
-      return
-    }
+    this.selectedIds = containerEl ? [containerEl.id] : [existing.id]
     this.afterChange()
   }
 

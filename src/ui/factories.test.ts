@@ -39,12 +39,14 @@ describe('makePenElement', () => {
 })
 
 describe('makeArrowElement', () => {
-  it('stores start and end points', () => {
+  it('stores start and end points with a classic head', () => {
     const el = makeArrowElement('a', { x: 0, y: 0 }, { x: 50, y: 25 })
     expect(el.points).toEqual([
       { x: 0, y: 0 },
       { x: 50, y: 25 },
     ])
+    expect(el.startArrowhead).toBeNull()
+    expect(el.endArrowhead).toBe('arrow')
   })
 })
 
@@ -57,8 +59,17 @@ describe('makeTextElement', () => {
       x: 5,
       y: 6,
       text: 'hello',
+      originalText: 'hello',
       fontSize: 28,
+      autoResize: true,
+      textAlign: 'left',
     })
+    expect(el.width).toBeGreaterThan(0)
+    expect(el.height).toBeCloseTo(35)
+  })
+
+  it('defaults to the 20px handwriting size', () => {
+    expect(makeTextElement('t', { x: 0, y: 0 }, 'hi').fontSize).toBe(20)
   })
 
   it('inherits the chosen stroke colour so text stays visible on dark boards', () => {

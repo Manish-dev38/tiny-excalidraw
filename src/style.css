@@ -570,6 +570,23 @@ button {
   font-weight: 600;
 }
 
+.prop-mixed {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--button-bg);
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.prop-mixed[hidden] {
+  display: none;
+}
+
 .swatch-grid {
   display: flex;
   flex-wrap: wrap;
@@ -681,6 +698,137 @@ button {
     currentColor 0 5px,
     transparent 5px 9px
   );
+}
+
+/* --- Font size --- */
+.font-row {
+  display: flex;
+  gap: 6px;
+}
+
+.font-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon-color);
+  font-family: 'Caveat', 'Segoe Print', 'Comic Sans MS', cursive;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.font-btn:hover {
+  background: var(--button-hover);
+}
+
+.font-btn.active {
+  background: var(--icon-bg-active);
+  color: var(--icon-active-fg);
+}
+
+/* --- Text alignment --- */
+.align-row {
+  display: flex;
+  gap: 6px;
+}
+
+.align-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon-color);
+  cursor: pointer;
+}
+
+.align-btn:hover {
+  background: var(--button-hover);
+}
+
+.align-btn.active {
+  background: var(--icon-bg-active);
+  color: var(--icon-active-fg);
+}
+
+.align-icon {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 16px;
+}
+
+.align-icon i {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.align-icon.align-left i {
+  align-self: flex-start;
+}
+
+.align-icon.align-center i {
+  align-self: center;
+}
+
+.align-icon.align-right i {
+  align-self: flex-end;
+}
+
+/* --- Arrowheads --- */
+.head-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.head-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.head-label {
+  width: 32px;
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.head-btn {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--icon-color);
+  cursor: pointer;
+}
+
+.head-btn:hover {
+  background: var(--button-hover);
+}
+
+.head-btn.active {
+  background: var(--icon-bg-active);
+  color: var(--icon-active-fg);
+}
+
+.head-icon {
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* --- Home --- */
@@ -957,16 +1105,17 @@ button {
 textarea.editing {
   position: fixed;
   z-index: 30;
-  min-width: 120px;
-  max-width: 70vw;
-  padding: 2px 4px;
+  min-width: 60px;
+  max-width: 80vw;
+  padding: 0;
   border: 1px dashed var(--accent);
   border-radius: 4px;
   outline: none;
   background: transparent;
   color: var(--text);
   font-family: 'Caveat', 'Segoe Print', 'Comic Sans MS', cursive;
-  line-height: 1.2;
+  line-height: 1.25;
+  white-space: pre-wrap;
   resize: none;
   overflow: hidden;
 }

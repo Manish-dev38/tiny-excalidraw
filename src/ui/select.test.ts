@@ -26,19 +26,29 @@ const pen = (id: string, points: { x: number; y: number }[]): ExcalidrawElement 
 })
 
 describe('hitTestElement', () => {
-  it('hits a rectangle inside its bounds', () => {
-    expect(hitTestElement(rect('a', 0, 0), { x: 5, y: 5 })).toBe(true)
+  // Outline hit-testing uses a screen-space tolerance, so use a shape large
+  // enough that "interior" and "outside" are unambiguous.
+  const big = (id: string, overrides: Partial<ExcalidrawElement> = {}): ExcalidrawElement =>
+    ({ ...rect(id, 0, 0), width: 100, height: 100, ...overrides }) as ExcalidrawElement
+
+  it('ignores the interior of an unfilled rectangle', () => {
+    expect(hitTestElement(big('a'), { x: 50, y: 50 })).toBe(false)
   })
-  it('hits a rectangle on its boundary', () => {
-    expect(hitTestElement(rect('a', 0, 0), { x: 10, y: 5 })).toBe(true)
+  it('hits an unfilled rectangle on its stroke', () => {
+    expect(hitTestElement(big('a'), { x: 100, y: 50 })).toBe(true)
+  })
+  it('hits the interior of a filled rectangle', () => {
+    const filled = big('a', { background: '#ffffff' })
+    expect(hitTestElement(filled, { x: 50, y: 50 })).toBe(true)
   })
   it('misses a point outside the rectangle', () => {
-    expect(hitTestElement(rect('a', 0, 0), { x: 12, y: 5 })).toBe(false)
+    expect(hitTestElement(big('a'), { x: 120, y: 50 })).toBe(false)
   })
-  it('hits infrastructure shapes by their box', () => {
-    const laptop: ExcalidrawElement = { ...rect('a', 0, 0), type: 'laptop' } as ExcalidrawElement
-    expect(hitTestElement(laptop, { x: 5, y: 5 })).toBe(true)
-    expect(hitTestElement(laptop, { x: 15, y: 5 })).toBe(false)
+  it('hits unfilled infrastructure shapes by their outline', () => {
+    const laptop = big('a', { type: 'laptop' })
+    expect(hitTestElement(laptop, { x: 100, y: 50 })).toBe(true)
+    expect(hitTestElement(laptop, { x: 50, y: 50 })).toBe(false)
+    expect(hitTestElement(laptop, { x: 120, y: 50 })).toBe(false)
   })
   it('hits a pen stroke near one of its points', () => {
     const p = pen('a', [
@@ -142,5 +152,16 @@ describe('acceptsStyle', () => {
     expect(acceptsStyle('arrow', 'strokeWidth')).toBe(true)
     expect(acceptsStyle('rectangle', 'strokeWidth')).toBe(true)
     expect(acceptsStyle('text', 'strokeWidth')).toBe(false)
+  })
+  it('accepts font and alignment only for text', () => {
+    expect(acceptsStyle('text', 'fontSize')).toBe(true)
+    expect(acceptsStyle('text', 'textAlign')).toBe(true)
+    expect(acceptsStyle('rectangle', 'fontSize')).toBe(false)
+    expect(acceptsStyle('arrow', 'textAlign')).toBe(false)
+  })
+  it('accepts arrowheads only for arrows', () => {
+    expect(acceptsStyle('arrow', 'startArrowhead')).toBe(true)
+    expect(acceptsStyle('arrow', 'endArrowhead')).toBe(true)
+    expect(acceptsStyle('rectangle', 'endArrowhead')).toBe(false)
   })
 })

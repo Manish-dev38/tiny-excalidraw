@@ -8,7 +8,14 @@ export type UiTool = Tool | 'eraser' | 'select' | 'hand'
 export type PanelMode = 'auto' | 'open' | 'closed'
 
 /** Property groups the panel can render. */
-export type StyleGroup = 'stroke' | 'background' | 'strokeWidth' | 'lineStyle'
+export type StyleGroup =
+  | 'stroke'
+  | 'background'
+  | 'strokeWidth'
+  | 'lineStyle'
+  | 'fontSize'
+  | 'textAlign'
+  | 'arrowheads'
 
 export type ConnectionStatus = 'connecting' | 'live' | 'offline'
 
@@ -46,9 +53,9 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
       case 'pen':
         return ['stroke', 'strokeWidth']
       case 'arrow':
-        return ['stroke', 'lineStyle', 'strokeWidth']
+        return ['stroke', 'strokeWidth', 'lineStyle', 'fontSize', 'textAlign', 'arrowheads']
       case 'text':
-        return ['stroke']
+        return ['stroke', 'fontSize', 'textAlign']
       case 'rectangle':
       case 'ellipse':
       case 'laptop':
@@ -56,15 +63,17 @@ export function styleGroupsFor(tool: UiTool, selection: ExcalidrawElement | null
       case 'server':
       case 'cloud':
       case 'user':
-        return ['stroke', 'background', 'strokeWidth']
+        return ['stroke', 'background', 'strokeWidth', 'fontSize', 'textAlign']
     }
   }
 
   switch (tool) {
     case 'pen':
       return ['stroke', 'strokeWidth']
+    case 'text':
+      return ['stroke', 'fontSize', 'textAlign']
     case 'arrow':
-      return ['stroke', 'lineStyle', 'strokeWidth']
+      return ['stroke', 'strokeWidth', 'lineStyle', 'fontSize', 'textAlign', 'arrowheads']
     case 'rectangle':
     case 'ellipse':
     case 'laptop':

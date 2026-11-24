@@ -79,10 +79,10 @@ describe('cloneElements', () => {
       strokeColor: '#000',
       background: 'transparent',
       strokeWidth: 1,
-      endBinding: { shapeId: 'shape' },
+      endBinding: { elementId: 'shape', mode: 'inside', fixedPoint: [1, 0.5] },
     }
     const clones = cloneElements([shape, arrow], (i) => `new-${i}`, 20, 20)
-    expect(clones[1]).toMatchObject({ id: 'new-1', endBinding: { shapeId: 'new-0' } })
+    expect(clones[1]).toMatchObject({ id: 'new-1', endBinding: { elementId: 'new-0' } })
   })
   it('drops bindings to shapes outside the copied set', () => {
     const arrow: ExcalidrawElement = {
@@ -97,9 +97,38 @@ describe('cloneElements', () => {
       strokeColor: '#000',
       background: 'transparent',
       strokeWidth: 1,
-      endBinding: { shapeId: 'outside' },
+      endBinding: { elementId: 'outside', mode: 'orbit', fixedPoint: [0, 0.5] },
     }
     const clones = cloneElements([arrow], () => 'new', 0, 0)
     expect(clones[0].type === 'arrow' && clones[0].endBinding).toBeFalsy()
+  })
+
+  it('remaps container ids and bound text refs inside the copied set', () => {
+    const shape: ExcalidrawElement = {
+      ...rect('shape'),
+      boundElements: [{ type: 'text', id: 'label' }],
+    }
+    const label: ExcalidrawElement = {
+      id: 'label',
+      type: 'text',
+      x: 0,
+      y: 0,
+      text: 'hi',
+      originalText: 'hi',
+      fontSize: 16,
+      width: 60,
+      height: 20,
+      autoResize: false,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+      lineHeight: 1.25,
+      containerId: 'shape',
+      strokeColor: '#000',
+      background: 'transparent',
+      strokeWidth: 1,
+    }
+    const clones = cloneElements([shape, label], (i) => `new-${i}`, 0, 0)
+    expect(clones[1]).toMatchObject({ containerId: 'new-0' })
+    expect(clones[0]).toMatchObject({ boundElements: [{ type: 'text', id: 'new-1' }] })
   })
 })
