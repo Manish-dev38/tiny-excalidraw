@@ -1,3 +1,4 @@
+import { TEXT_LINE_HEIGHT, textBlock } from './textLayout'
 import type { ExcalidrawElement, Point } from './types'
 
 export function dist(a: Point, b: Point): number {
@@ -108,7 +109,7 @@ export interface BBox {
 }
 
 /** Line height multiplier shared by canvas rendering, bounds and SVG export. */
-export const LINE_HEIGHT = 1.2
+export const LINE_HEIGHT = TEXT_LINE_HEIGHT
 
 export function bboxOf(el: ExcalidrawElement): BBox {
   const pad = el.strokeWidth / 2
@@ -154,12 +155,22 @@ export function bboxOf(el: ExcalidrawElement): BBox {
       maxY = Math.max(el.points[0].y, el.points[1].y)
       break
     case 'text': {
-      const lines = el.text.split('\n')
-      const longest = lines.reduce((n, line) => Math.max(n, line.length), 0)
+      // Text elements carry their own laid-out metrics; fall back to a fresh
+      // layout for legacy objects that predate the round-3 fields.
+      const width =
+        typeof el.width === 'number' && Number.isFinite(el.width)
+          ? el.width
+          : textBlock(el.text, el.fontSize, {
+              maxWidth: el.autoResize === false ? el.width : null,
+            }).width
+      const height =
+        typeof el.height === 'number' && Number.isFinite(el.height)
+          ? el.height
+          : textBlock(el.text, el.fontSize, { lineHeight: el.lineHeight }).height
       minX = el.x
       minY = el.y
-      maxX = el.x + longest * el.fontSize * 0.55
-      maxY = el.y + lines.length * el.fontSize * LINE_HEIGHT
+      maxX = el.x + width
+      maxY = el.y + height
       break
     }
   }

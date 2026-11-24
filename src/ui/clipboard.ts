@@ -74,8 +74,44 @@ export function cloneElements(
 ): ExcalidrawElement[] {
   const idMap = new Map<string, string>()
   elements.forEach((el, i) => idMap.set(el.id, idFor(i)))
-  return elements.map((el) => {
-    const clone = translateElement({ ...el, id: idMap.get(el.id)! }, { dx, dy })
-    return clone.type === 'arrow' ? remapArrowBindings(clone, idMap) : clone
-  })
+  return elements.map((el) => remapClone(
+    translateElement({ ...el, id: idMap.get(el.id)! }, { dx, dy }),
+    idMap,
+  ))
+}
+
+/**
+ * Rewrites references between cloned elements. Bindings/labels pointing at
+ * elements outside the copied set are dropped, so a clone never silently
+ * attaches to the original.
+ */
+function remapClone(
+  el: ExcalidrawElement,
+  idMap: ReadonlyMap<string, string>,
+): ExcalidrawElement {
+  let next = el
+  if (next.type === 'arrow') next = remapArrowBindings(next, idMap)
+
+  if (next.type === 'text' && next.containerId) {
+    const mapped = idMap.get(next.containerId)
+    if (mapped) next = { ...next, containerId: mapped }
+    else {
+      const without = { ...next }
+      delete without.containerId
+      next = without
+    }
+  }
+
+  if (next.boundElements) {
+    const refs = next.boundElements
+      .map((ref) => ({ ...ref, id: idMap.get(ref.id) ?? '' }))
+      .filter((ref) => ref.id !== '')
+    if (refs.length > 0) next = { ...next, boundElements: refs }
+    else {
+      const without = { ...next }
+      delete without.boundElements
+      next = without
+    }
+  }
+  return next
 }

@@ -1,3 +1,4 @@
+import { migrateElements } from './migrate'
 import { createScene, type Scene } from './scene'
 import type { ElementType, ExcalidrawElement } from './types'
 
@@ -43,7 +44,7 @@ export function deserializeScene(json: string): Scene {
   if (!Array.isArray(elements) || !elements.every(isElement)) {
     throw new Error('Invalid scene shape')
   }
-  return { elements }
+  return { elements: migrateElements(elements) }
 }
 
 export function emptyScene(): Scene {

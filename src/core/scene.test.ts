@@ -59,8 +59,8 @@ describe('updateElement', () => {
         { x: 0, y: 0 },
         { x: 10, y: 0 },
       ],
-      startBinding: { shapeId: 's1' },
-      endBinding: { shapeId: 's2' },
+      startBinding: { elementId: 's1', mode: 'inside', fixedPoint: [1, 0.5] },
+      endBinding: { elementId: 's2', mode: 'orbit', fixedPoint: [0, 0.5] },
     }
     const base = addElement(createScene(), arrow)
     const next = updateElement(base, 'a', { startBinding: undefined, endBinding: undefined })
@@ -68,7 +68,9 @@ describe('updateElement', () => {
     expect('startBinding' in el).toBe(false)
     expect('endBinding' in el).toBe(false)
     // The input scene keeps its bindings.
-    expect(getElement(base, 'a')).toMatchObject({ startBinding: { shapeId: 's1' } })
+    expect(getElement(base, 'a')).toMatchObject({
+      startBinding: { elementId: 's1' },
+    })
   })
 })
 

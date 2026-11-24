@@ -14,6 +14,7 @@ import {
   serializeBoardFile,
 } from './boardFile'
 import { createScene } from './scene'
+import { textElement } from './testHelpers'
 import type { ExcalidrawElement } from './types'
 
 const rect: ExcalidrawElement = {
@@ -28,17 +29,14 @@ const rect: ExcalidrawElement = {
   strokeWidth: 2,
 }
 
-const text: ExcalidrawElement = {
-  id: 'text-1',
-  type: 'text',
+const text: ExcalidrawElement = textElement('text-1', {
   x: 0,
   y: 0,
   text: 'Hello',
+  originalText: 'Hello',
   fontSize: 24,
   strokeColor: '#ffffff',
-  background: 'transparent',
-  strokeWidth: 1,
-}
+})
 
 const scene = { elements: [rect, text] }
 
@@ -186,7 +184,7 @@ describe('parseBoardFile', () => {
       parseBoardFile(JSON.stringify({ format: 'excalidraw', version: 1, scene: { elements: [] } })),
     ).toThrow("This isn't a Tiny Excalidraw board file.")
     expect(() =>
-      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 3, scene: { elements: [] } })),
+      parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 4, scene: { elements: [] } })),
     ).toThrow('newer version')
     expect(() =>
       parseBoardFile(JSON.stringify({ format: BOARD_FORMAT, version: 0, scene: { elements: [] } })),
@@ -230,21 +228,65 @@ describe('parseBoardFile', () => {
     ).toThrow('text with invalid properties')
   })
 
-  it('accepts valid arrow attachments and rejects malformed ones', () => {
+  it('accepts v3 proportional bindings and rejects malformed ones', () => {
+    const boundShape = { ...rect, id: 'shape-1' }
     const arrow = {
       ...rect,
+      id: 'arrow-1',
       type: 'arrow',
-      points: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
-      endBinding: { shapeId: 'shape-1' },
+      points: [{ x: 0, y: 0 }, { x: 130, y: 60 }],
+      endBinding: { elementId: 'shape-1', mode: 'inside', fixedPoint: [1, 0.5] },
     }
-    const parsed = parseBoardFile(envelope([arrow]))
-    expect(parsed.scene.elements[0]).toMatchObject({ endBinding: { shapeId: 'shape-1' } })
+    const parsed = parseBoardFile(envelope([boundShape, arrow]))
+    expect(parsed.scene.elements[1]).toMatchObject({
+      endBinding: { elementId: 'shape-1', mode: 'inside' },
+    })
     expect(() =>
       parseBoardFile(envelope([{ ...arrow, startBinding: { shapeId: '' } }])),
     ).toThrow('arrow with an invalid attachment')
     expect(() =>
       parseBoardFile(envelope([{ ...arrow, endBinding: 'shape-1' }])),
     ).toThrow('arrow with an invalid attachment')
+  })
+
+  it('migrates legacy attachments into proportional v3 anchors', () => {
+    const boundShape = { ...rect, id: 'shape-1' }
+    const arrow = {
+      ...rect,
+      id: 'arrow-1',
+      type: 'arrow',
+      points: [{ x: 0, y: 60 }, { x: 130, y: 60 }],
+      endBinding: { shapeId: 'shape-1' },
+    }
+    const parsed = parseBoardFile(envelope([boundShape, arrow]))
+    expect(parsed.scene.elements[1]).toMatchObject({
+      endBinding: { elementId: 'shape-1', mode: 'inside' },
+    })
+  })
+
+  it('fills in text metrics for a legacy board', () => {
+    const legacyText = {
+      ...rect,
+      id: 'text-old',
+      type: 'text',
+      text: 'Hello world',
+      fontSize: 20,
+    }
+    const parsed = parseBoardFile(
+      JSON.stringify({ format: BOARD_FORMAT, version: 1, scene: { elements: [legacyText] } }),
+    )
+    const el = parsed.scene.elements[0]
+    expect(el).toMatchObject({
+      type: 'text',
+      autoResize: true,
+      textAlign: 'left',
+      verticalAlign: 'top',
+      lineHeight: 1.25,
+    })
+    if (el.type === 'text') {
+      expect(el.width).toBeGreaterThan(0)
+      expect(el.height).toBeCloseTo(25)
+    }
   })
 
   it('rejects duplicate ids', () => {

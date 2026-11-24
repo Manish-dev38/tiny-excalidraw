@@ -14,6 +14,9 @@ to run.
   is selected automatically, so styles apply to it right away
 - **Multi-select**: Shift-click to add or remove elements, or drag a marquee from empty
   canvas; group move, delete, and style changes undo as a single step
+- **Resize**: shapes show eight handles and text shows width handles; drag a corner or
+  edge to resize, hold **Shift** to keep the aspect ratio on corners and **Alt** to resize
+  from the centre. A group selection scales together (fonts scale, stroke width does not)
 - **Clipboard**: `Ctrl/Cmd+C/X/V/D` copy, cut, paste, and duplicate through an internal
   clipboard; pastes offset and fan out, and arrow attachments follow the cloned shapes
 - **Hand tool**: drag to pan, alongside space-drag and middle/right-drag
@@ -22,16 +25,23 @@ to run.
 - Full undo/redo (Ctrl/Cmd+Z, Ctrl+Shift+Z or Ctrl+Y) and clickable undo/redo pills
 - **Floating Excalidraw-style chrome**: centred tool pill with shortcut badges,
   hamburger properties panel, Share, `…` menu, bottom hints and a `?` shortcut popover
-- **Contextual properties panel**: stroke, background, stroke width, and a solid/dashed
-  line style for arrows — only the groups that apply to the active tool or selection
-- **Arrows**: elbow (orthogonal) routing with the head drawn along the path; ends that
-  land on a shape snap to its edge and follow that shape when it moves, while dragging
-  the arrow itself detaches it
+- **Contextual properties panel**: stroke, background, stroke width, font size, text
+  alignment, and independent arrowheads for both ends, plus a solid/dashed line style —
+  only the groups that apply to the active tool or selection, with a "Mixed" badge when a
+  multi-selection disagrees
+- **Arrows**: elbow (orthogonal) routing with an independent head at each end (none,
+  arrow, or triangle). An end dropped on a shape binds to its facing edge, and one dropped
+  nearby orbits its border; both use proportional anchors, so the arrow keeps following
+  when the shape moves or resizes, while dragging the arrow itself detaches it
+- **Labels**: double-click a shape or arrow to add a bound label that stays centred and
+  re-wraps as its container changes; deleting a shape removes its label and attached
+  arrows in one undo step
 - **Share** copies the room link and reports live/connecting/offline state
 - Keyboard shortcuts: `V` `H` `R` `O` `A` `P` `T` `E`, Space to pan, wheel to zoom
 - **Text**: click to place, Enter commits, Shift+Enter adds a line, Escape cancels,
   click-away commits; double-click (or Enter on a selected text) reopens the editor
-  pre-filled, and text inherits the stroke colour and exports as multiple lines
+  pre-filled. Text uses real font metrics and word wrapping, has 16/20/28/36 px sizes and
+  left/centre/right alignment, inherits the stroke colour, and exports as multiple lines
 - Real-time collaboration with live cursor presence, including name labels
 - **Save** (`Ctrl/Cmd+S`) downloads the whole board as an editable `.whiteboard` JSON
   file; **Save As** (`Ctrl/Cmd+Shift+S`) lets you choose and remember its filename
@@ -51,7 +61,7 @@ to run.
 ```bash
 npm install
 npm run dev        # dev server
-npm test           # vitest suite (183 tests)
+npm test           # vitest suite (250 tests)
 npm run build      # type-check + production build to dist/
 ```
 
@@ -63,9 +73,11 @@ npm run build      # type-check + production build to dist/
    whoever joins later connects as a client. If the host is offline, the client
    shows "Friend offline".
 3. Draw together — strokes, shapes, and text appear live on both screens.
-4. Draw an arrow from one shape to another to connect them: endpoints snap to the
-   nearest edge and keep following when you move the shapes.
-5. Bring your own voice/video call; the board is canvas-only.
+4. Draw an arrow from one shape to another to connect them: endpoints bind to the shapes
+   with proportional anchors and keep following when you move or resize them.
+5. Double-click a shape or arrow to add a centred label, and drag any selection handle to
+   resize; the properties panel handles font size, alignment, and both arrowheads.
+6. Bring your own voice/video call; the board is canvas-only.
 
 ## Saving and restoring boards
 
@@ -95,9 +107,11 @@ The app is a static site; collaboration uses PeerJS's free cloud signaling.
 
 ```
 src/
-  core/       pure logic: types, scene, geometry, elbow routing and arrow
-              bindings, history (op-based undo), room ids, serialization,
-              SVG export, board-file codec/validation
+  core/       pure logic: types, scene, geometry, elbow routing, proportional
+              arrow bindings, resizing/handle math, text measurement and
+              wrapping, bound-label containers, v1/v2→v3 migration, history
+              (op-based undo), room ids, serialization, SVG export, board-file
+              codec/validation
   collab/     peer protocol (validated message envelope) + PeerJS session
   ui/         canvas app, renderer, toolbar (+ shapes picker), chrome,
               properties, ui-state rules, home screen, viewport, element

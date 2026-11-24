@@ -9,20 +9,28 @@ import {
   statusLabel,
   styleGroupsFor,
 } from './uiState'
+import { textElement } from '../core/testHelpers'
 import type { ExcalidrawElement } from '../core/types'
 
 const shape = (type: 'rectangle' | 'ellipse' | 'arrow' | 'pen' | 'text'): ExcalidrawElement => {
   const base = { id: 'e', x: 0, y: 0, strokeColor: '#000', background: 'transparent', strokeWidth: 2 }
   if (type === 'arrow') return { ...base, type, points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }
   if (type === 'pen') return { ...base, type, points: [{ x: 0, y: 0 }] }
-  if (type === 'text') return { ...base, type, text: 'hi', fontSize: 24 }
+  if (type === 'text') return textElement('e')
   return { ...base, type, width: 10, height: 10 }
 }
 
 describe('styleGroupsFor', () => {
   it('offers only the groups a drawing tool can use', () => {
     expect(styleGroupsFor('pen', null)).toEqual(['stroke', 'strokeWidth'])
-    expect(styleGroupsFor('arrow', null)).toEqual(['stroke', 'lineStyle', 'strokeWidth'])
+    expect(styleGroupsFor('arrow', null)).toEqual([
+      'stroke',
+      'strokeWidth',
+      'lineStyle',
+      'fontSize',
+      'textAlign',
+      'arrowheads',
+    ])
     expect(styleGroupsFor('rectangle', null)).toEqual(['stroke', 'background', 'strokeWidth'])
     expect(styleGroupsFor('ellipse', null)).toEqual(['stroke', 'background', 'strokeWidth'])
   })
@@ -31,21 +39,26 @@ describe('styleGroupsFor', () => {
     expect(styleGroupsFor('select', null)).toEqual([])
     expect(styleGroupsFor('hand', null)).toEqual([])
     expect(styleGroupsFor('eraser', null)).toEqual([])
-    expect(styleGroupsFor('text', null)).toEqual([])
+    expect(styleGroupsFor('text', null)).toEqual(['stroke', 'fontSize', 'textAlign'])
   })
 
   it('follows the selected element type', () => {
     expect(styleGroupsFor('select', shape('pen'))).toEqual(['stroke', 'strokeWidth'])
     expect(styleGroupsFor('select', shape('arrow'))).toEqual([
       'stroke',
-      'lineStyle',
       'strokeWidth',
+      'lineStyle',
+      'fontSize',
+      'textAlign',
+      'arrowheads',
     ])
-    expect(styleGroupsFor('select', shape('text'))).toEqual(['stroke'])
+    expect(styleGroupsFor('select', shape('text'))).toEqual(['stroke', 'fontSize', 'textAlign'])
     expect(styleGroupsFor('select', shape('rectangle'))).toEqual([
       'stroke',
       'background',
       'strokeWidth',
+      'fontSize',
+      'textAlign',
     ])
   })
 })

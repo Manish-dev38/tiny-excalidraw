@@ -32,7 +32,7 @@ bundle weight.
 | 10 | Rooms | **Home screen → "New room" → shareable `#room=abc` link; friend joins same room** |
 | 11 | Input | **Pointer Events** (unifies mouse + touch/stylus) |
 | 12 | UI | **Faithful clone** of Excalidraw's design/theme/toolbar/icon style, all assets **implemented in-house** (MIT-licensed design language as reference only) |
-| 13 | Text | **Click-to-place text, inline edit, drag-to-move** |
+| 13 | Text | **Click-to-place text with real font metrics and word wrap; inline edit; drag-to-move** |
 | 14 | Cleanup | **"Recent boards" list (max 10) with delete option** |
 | 15 | Board files | **Save / Save As / Import `.whiteboard` JSON** (editable scenes, no backend) |
 | 16 | Autosave | **300 ms debounced IndexedDB writes + visible saved status** |
@@ -41,8 +41,11 @@ bundle weight.
 | 19 | Clipboard | **Internal copy/cut/paste/duplicate (`Ctrl/⌘ C/X/V/D`) with offset fan-out; no cross-app paste** |
 | 20 | Text editing | **Double-click or Enter reopens the inline editor pre-filled; emptying the text deletes it** |
 | 21 | Shapes | **Five infrastructure shapes — laptop, database, server, cloud, user — in a toolbar picker** |
-| 22 | Arrows | **Orthogonal elbow routing, arrowhead along the path, optional dashed style** |
-| 23 | Attachment | **Arrow ends snap to a shape's facing side and follow shape moves; moving an arrow detaches it** |
+| 22 | Arrows | **Orthogonal elbow routing, independent heads at both ends (none/arrow/triangle), optional dashed style** |
+| 23 | Attachment | **Proportional arrow anchors on a shape's border (`inside`/`orbit`), following moves and resizes; moving an arrow detaches it** |
+| 24 | Resize | **8 handles on shapes, corner/left-right handles on text (wrap width), group scaling; Shift keeps aspect, Alt resizes from centre** |
+| 25 | Labels | **One bound text label per shape or arrow, centred and re-wrapped as the container changes** |
+| 26 | Deleting | **Deleting a shape also removes its label and attached arrows, as one undo step** |
 
 ## 3. Architecture
 
@@ -59,17 +62,23 @@ bundle weight.
   one-time legacy-migration marker. A localStorage adapter takes over with a warning
   when IndexedDB is unavailable.
 - **Board files** are versioned JSON envelopes wrapping the same scene; importing
-  validates the whole file before changing anything. Version 2 adds infrastructure
-  shapes; version 1 files still import.
+  validates the whole file before changing anything. Version 3 adds proportional arrow
+  bindings, text metrics/alignment, bound labels, and arrowheads; version 1 and 2 files
+  still import and are migrated on read.
 - **Autosave** writes the scene through an injected repository after a trailing 300 ms
   debounce, tracks saving/saved/failed status, and flushes on hide, page leave, and
   before returning home.
 - **Scene model:** an ordered list of elements (strokes, shapes, text). Each has a stable
-  unique id. Arrows may carry `startBinding`/`endBinding` `{ shapeId }` attachments.
-  Shared state is idempotent so late-joining peers converge.
+  unique id. Arrows may carry `startBinding`/`endBinding`
+  `{ elementId, mode: 'inside' | 'orbit', fixedPoint: [nx, ny] }` attachments, where
+  `fixedPoint` is proportional to the shape's box. Text carries `width`, `height`,
+  `autoResize`, `textAlign`, `verticalAlign`, and `lineHeight`, and a label points back
+  at its container with `containerId`. Shared state is idempotent so late-joining peers
+  converge.
 - **Grouped actions** (multi-move, multi-delete, detach-on-delete, paste/duplicate) are
   applied as one batched history op, so they undo and redo in a single step while the
-  broadcast still fans out to individual peer ops.
+  broadcast still fans out to individual peer ops. A resize gesture and the resulting
+  label/arrow updates also form one undo entry.
 
 ## 4. Tools & interaction
 
@@ -101,12 +110,30 @@ bundle weight.
   dropped when the target shape is not part of the copied set.
 - Text: double-click a text element, or press Enter with one selected, to reopen the
   inline editor pre-filled. Enter commits (trimmed), Escape discards, click-away commits,
-  unchanged text is a no-op, and emptying the text removes the element.
+  unchanged text is a no-op, and emptying the text removes the element. Text is measured
+  with real font metrics and wrapped greedily on word boundaries (explicit newlines are
+  preserved and words are never split) at a minimum block width of 60 px. Font sizes are
+  16/20/28/36 and alignment is left/centre/right.
+- Resize: selecting a shape shows eight handles (corners and edge midpoints); dragging one
+  resizes the element, with a 12 × 12 minimum. Holding **Shift** keeps the aspect ratio on
+  corner handles; holding **Alt** resizes from the centre. Text exposes its four corners
+  plus left/right handles and resizing sets a fixed wrap width (`autoResize: false`) so it
+  reflows instead of scaling glyphs. A multi-element selection scales every member through
+  the group box, scales font sizes by `min(sx, sy)` and never scales stroke width; bound
+  arrows are recomputed from their anchors.
+- Labels: double-click a shape or arrow to add one bound text label. Shape labels keep an
+  8 px inset, wrap at the container width, and centre vertically and horizontally; arrow
+  labels sit centred on the route and wrap at `min(240, arrow length)`. Resizing or moving
+  the container reflows its label.
 - Arrows: routed as orthogonal elbows (two runs joined by a mid jog, straight for
-  axis-aligned drags), with the arrowhead drawn along the final segment. Ends that land
-  on a shape (within 10 px) snap to the facing side midpoint and persist as attachments;
-  moving that shape drags the arrow ends along, while moving the arrow itself detaches
-  it. Deleting a shape detaches its arrows and keeps their endpoints.
+  axis-aligned drags), with independent heads at each end (`none`, `arrow`, or `triangle`)
+  drawn along the terminal segment. An end dropped inside a shape binds `inside` and snaps
+  to the facing edge midpoint; an end dropped within 24 px binds `orbit` to the nearest
+  border point. Both keep a 6 px gap and store a proportional `fixedPoint`, so moving or
+  resizing the shape keeps the arrow attached to the same relative spot. Moving the arrow
+  itself detaches it.
+- Deleting: removing a shape also removes its bound label and every arrow attached to it,
+  and a single undo restores all of them. Deleting just a label leaves its container.
 - Pointer Events unify mouse/touch/stylus for all tools.
 
 ## 5. UI / visual design (Excalidraw-inspired)
@@ -127,12 +154,16 @@ bundle weight.
   - **Bottom-left:** zoom pill (`−`, percentage, `+`; percentage resets) and undo/redo pill.
   - **Bottom-right:** `?` help popover listing every shortcut.
 - **Properties panel** floats under the hamburger and renders only meaningful groups:
-  pen → stroke + stroke width; arrow → stroke + line style (solid/dashed) + stroke
-  width; rectangle/ellipse/infrastructure shapes → stroke + background + stroke width;
-  text → stroke. It is contextual for drawing tools and selections, closed for
-  select/hand/eraser with no selection, and the hamburger can pin it open or closed.
-  With a multi-selection the groups follow the primary (last-selected) element and apply
-  to every selected element that accepts the property.
+  pen → stroke + stroke width; text → stroke + font size + alignment; arrow → stroke +
+  width + line style + font + alignment + arrowheads; rectangle/ellipse/infrastructure
+  shapes → stroke + background + width + font + alignment (for their label). Groups
+  appear in the order stroke, width, line style, background, font, alignment,
+  arrowheads, so only the implemented controls are shown. It is contextual for drawing
+  tools and selections, closed for select/hand/eraser with no selection, and the
+  hamburger can pin it open or closed. With a multi-selection the groups follow the
+  primary (last-selected) element and apply to every selected element that accepts the
+  property; groups whose selected values disagree show a "Mixed" badge and leave every
+  option unpressed until the user picks a value.
 - A contextual hint under the tool pill describes the active tool; it hides while the
   text editor is open and on narrow screens.
 - **Text** uses an in-canvas inline editor: click to place, type, Enter commits,
@@ -153,7 +184,8 @@ bundle weight.
 ## 6. Export
 
 - SVG: serialize scene to `<svg>` (crisp at any zoom, printable), including elbow-routed
-  arrows, dashed strokes, and the infrastructure shapes.
+  arrows with both arrowheads, dashed strokes, wrapped/aligned text, bound labels, and
+  the infrastructure shapes.
 - PNG: render scene to an offscreen canvas at a fixed scale, download.
 
 ## 7. Board files, autosave & restore
@@ -174,19 +206,25 @@ bundle weight.
 ```json
 {
   "format": "tiny-excalidraw",
-  "version": 2,
-  "savedAt": "2026-11-05T10:00:00.000Z",
+  "version": 3,
+  "savedAt": "2026-11-24T10:00:00.000Z",
   "roomId": "abc123",
   "scene": { "elements": [] }
 }
 ```
 
 - The scene reuses the existing element model, so every stroke, shape, arrow, text
-  block, colour, position, size, dashed flag, and arrow attachment round-trips and stays
-  editable.
-- Version 2 adds infrastructure shapes and arrow attachments; version 1 files still
-  import unchanged (the element model is compatible), and version 3+ is rejected as
-  "created by a newer version".
+  block, colour, position, size, dashed flag, arrowhead, proportional binding, text
+  metric/alignment field, and bound label round-trips and stays editable.
+- Version 2 added infrastructure shapes and arrow attachments; version 3 adds
+  proportional (`inside`/`orbit`) bindings, text metrics/alignment, bound labels, and
+  arrowheads. Version 1 and 2 files import unchanged and are migrated in memory: legacy
+  `{ shapeId }` attachments become proportional anchors, text gains its layout fields,
+  `boundElements` is rebuilt from `containerId`, and labels are re-wrapped and re-centred.
+  Files with a version above 3 are rejected as "created by a newer version".
+- Validation also accepts the legacy `{ shapeId }` binding form so older files load, and
+  checks arrowheads (`null`/`arrow`/`triangle`), text alignment/line-height fields, and
+  bound-text references.
 - Import accepts the versioned envelope, plus legacy raw `{ elements }` objects, with
   `.whiteboard` and `.json` extensions.
 - Validation is all-or-nothing: malformed JSON, wrong formats/versions, missing or
@@ -223,8 +261,11 @@ bundle weight.
 ## 8. Testing & quality
 
 - TDD-driven build. Unit tests for the core, framework-free modules (scene model, undo/redo
-  stack, element geometry, elbow routing, arrow bindings, serialization/export,
-  board-file validation, clipboard cloning, text-edit rules, room-id generation).
+  stack, element geometry, elbow routing, proportional arrow bindings and anchors,
+  resizing and handle hit-testing, text measurement/wrapping, bound-label layout and
+  deletion cascades, v1/v2→v3 migration, serialization/export, board-file validation,
+  clipboard cloning, text-edit rules, room-id generation). The suite is 23 files /
+  250 tests.
 - Interactions that need a DOM (marquee, clipboard shortcuts, inline text editing,
   dragging bound arrows) are verified in the browser against the running app.
 - Type-safe: strict TypeScript throughout. No `any` leaks at module boundaries.
@@ -236,7 +277,8 @@ bundle weight.
   cloud persistence/accounts, real Excalidraw file format compat, mobile PWA offline.
 - Silent overwrite of a chosen file via the File System Access API, board titles, and
   persisting viewport/tool/selection per board.
-- Arrow labels, bound text labels inside shapes, and cross-application clipboard paste.
+- Element rotation, curved or multi-segment arrow routing beyond the elbow, per-segment
+  arrow editing, and cross-application clipboard paste.
 
 ## 10. Definition of done
 
@@ -245,10 +287,16 @@ bundle weight.
 3. Every tool (pen, rectangle, ellipse, arrow, text, eraser, and the five infrastructure
    shapes) works with undo/redo (synced).
 4. Pan/zoom works within bounds.
-5. PNG & SVG export work, including elbow arrows, dashes, and infrastructure shapes.
-6. Save, Save As, and Import round-trip editable `.whiteboard` files (v2, with v1 import).
+5. PNG & SVG export work, including elbow arrows with heads, dashes, wrapped text, bound
+   labels, and infrastructure shapes.
+6. Save, Save As, and Import round-trip editable `.whiteboard` files (v3, with v1/v2
+   migration on import).
 7. Autosave shows its status, flushes when leaving, and reopens the last board.
-8. Multi-select, the internal clipboard, text re-editing, and arrow attachment all behave
-   as specified and undo as single steps.
-9. Netlify deploy produces a working static site.
-10. `npm run build` and `npm test` pass cleanly.
+8. Multi-select, the internal clipboard, text re-editing, and proportional arrow
+   attachment all behave as specified and undo as single steps.
+9. Shapes resize from eight handles (Shift/Alt modifiers, group scaling) and text resizes
+   its wrap width; deleting a shape cascades to its label and attached arrows in one undo.
+10. Both arrowheads, font size, and text alignment are editable from the properties panel,
+    including a Mixed state for multi-selections.
+11. Netlify deploy produces a working static site.
+12. `npm run build` and `npm test` pass cleanly.
